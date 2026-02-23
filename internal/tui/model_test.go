@@ -19,8 +19,7 @@ func TestModelQuitKeys(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 
 	tests := []tea.KeyMsg{
-		{Type: tea.KeyCtrlQ},
-		{Type: tea.KeyRunes, Runes: []rune{'q'}, Alt: true},
+		{Type: tea.KeyCtrlC},
 	}
 
 	for _, key := range tests {
@@ -219,6 +218,44 @@ func TestRenderACLIncludesDigestUsernameAndPermissions(t *testing.T) {
 	}
 }
 
+func TestModelCtrlSShowsStatsAndAnyKeyCloses(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+	selectedPath := m.selected.Path
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	typed := model.(Model)
+	if !typed.statsOpen {
+		t.Fatal("expected stats dialog to be open")
+	}
+	stats := typed.statsText
+	if !strings.Contains(stats, "Snapshot Statistics") {
+		t.Fatalf("expected stats header, got: %q", stats)
+	}
+	if !strings.Contains(stats, "Total nodes    : 4") {
+		t.Fatalf("expected total node count, got: %q", stats)
+	}
+	if !strings.Contains(stats, "Ephemeral nodes: 1") {
+		t.Fatalf("expected ephemeral count, got: %q", stats)
+	}
+	if !strings.Contains(stats, "Empty nodes    : 3") {
+		t.Fatalf("expected empty count, got: %q", stats)
+	}
+	if !strings.Contains(stats, "Biggest node:") || !strings.Contains(stats, "/a") {
+		t.Fatalf("expected biggest node details, got: %q", stats)
+	}
+
+	// Any key closes the dialog and should not trigger normal key handling.
+	model, _ = typed.Update(tea.KeyMsg{Type: tea.KeyDown})
+	typed = model.(Model)
+	if typed.statsOpen {
+		t.Fatal("expected stats dialog to be closed")
+	}
+	if typed.selected.Path != selectedPath {
+		t.Fatalf("expected selection unchanged when closing stats dialog, got %q", typed.selected.Path)
+	}
+}
+
 func sampleSnapshotTree() *snapshot.Tree {
 	root := &snapshot.Node{ID: "/", Path: ""}
 	a := &snapshot.Node{
@@ -229,7 +266,12 @@ func sampleSnapshotTree() *snapshot.Tree {
 		ACLRef: 1,
 		Stat:   snapshot.StatPersisted{Version: 5, Aversion: 7},
 	}
-	b := &snapshot.Node{ID: "b", Path: "/b", Parent: root}
+	b := &snapshot.Node{
+		ID:     "b",
+		Path:   "/b",
+		Parent: root,
+		Stat:   snapshot.StatPersisted{EphemeralOwner: 42},
+	}
 	a1 := &snapshot.Node{ID: "a1", Path: "/a/a1", Parent: a}
 	root.Children = []*snapshot.Node{a, b}
 	a.Children = []*snapshot.Node{a1}

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,9 @@ const (
 )
 
 var metadataPathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+var statsLabelStyle = lipgloss.NewStyle().Bold(true)
+var statusBarStyle = lipgloss.NewStyle().Reverse(true)
+var statusKeyStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
 
 type Model struct {
 	tree          *snapshot.Tree
@@ -30,6 +35,8 @@ type Model struct {
 	treeOffset    int
 	contentOffset int
 	focus         focusPane
+	statsOpen     bool
+	statsText     string
 	width         int
 	height        int
 }
@@ -62,9 +69,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if m.statsOpen {
+			m.statsOpen = false
+			return m, nil
+		}
 		switch msg.String() {
-		case "ctrl+q", "meta+q", "cmd+q", "alt+q":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "ctrl+s":
+			m.openStatsDialog()
+			return m, nil
 		case "tab":
 			if m.focus == focusTree {
 				m.focus = focusContent
@@ -110,9 +124,14 @@ func (m Model) View() string {
 	}
 
 	leftOuter, rightOuter, paneHeight := m.layout()
+	totalWidth := leftOuter + 1 + rightOuter
+	mainHeight := paneHeight - 1
+	if mainHeight < 6 {
+		mainHeight = 6
+	}
 	leftInner := leftOuter - 2
 	rightInner := rightOuter - 2
-	treeInnerHeight := paneHeight - 2
+	treeInnerHeight := mainHeight - 2
 
 	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.treeOffset, treeInnerHeight)
 	treeStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
@@ -126,7 +145,7 @@ func (m Model) View() string {
 
 	metaInnerHeight := metadataInnerHeight
 	aclInner := aclInnerHeight
-	contentInnerHeight := paneHeight - metaInnerHeight - aclInner - 8
+	contentInnerHeight := mainHeight - metaInnerHeight - aclInner - 8
 	if contentInnerHeight < 1 {
 		contentInnerHeight = 1
 	}
@@ -155,7 +174,13 @@ func (m Model) View() string {
 		Render(strings.Join(contentLines, "\n"))
 
 	rightPane := lipgloss.JoinVertical(lipgloss.Left, metadataBox, "", aclBox, "", contentBox)
-	return lipgloss.JoinHorizontal(lipgloss.Top, treeBox, " ", rightPane)
+	mainView := lipgloss.JoinHorizontal(lipgloss.Top, treeBox, " ", rightPane)
+	statusBar := m.renderStatusBar(totalWidth)
+	if !m.statsOpen {
+		return mainView + "\n" + statusBar
+	}
+	overlay := lipgloss.Place(totalWidth, mainHeight, lipgloss.Center, lipgloss.Center, m.renderStatsDialog())
+	return overlay + "\n" + statusBar
 }
 
 func (m *Model) refreshRows() {
@@ -536,4 +561,160 @@ func padRight(s string, n int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", n-len(s))
+}
+
+func (m Model) renderStatusBar(width int) string {
+	text := strings.Join([]string{
+		statusKeyStyle.Render("^C") + " Quit",
+		statusKeyStyle.Render("^S") + " Show stats",
+		statusKeyStyle.Render("Tab") + " Switch panels",
+	}, " | ")
+	if width < 1 {
+		width = lipgloss.Width(text)
+	}
+	if width == 1 {
+		return " "
+	}
+	line := text
+	lineWidth := lipgloss.Width(line)
+	innerWidth := width - 1
+	if lineWidth < innerWidth {
+		line += strings.Repeat(" ", innerWidth-lineWidth)
+	} else if lineWidth > innerWidth {
+		line = truncate(line, innerWidth)
+	}
+	return " " + statusBarStyle.Width(innerWidth).Render(line)
+}
+
+type snapshotStats struct {
+	totalNodes     int
+	ephemeralNodes int
+	emptyNodes     int
+	totalSize      int
+	biggestSize    int
+	biggestPath    string
+}
+
+func (m *Model) openStatsDialog() {
+	stats := collectSnapshotStats(m.tree)
+	avgSize := 0.0
+	if stats.totalNodes > 0 {
+		avgSize = float64(stats.totalSize) / float64(stats.totalNodes)
+	}
+	countLabels := []string{"Total nodes", "Ephemeral nodes", "Empty nodes"}
+	labelWidth := maxLen(countLabels)
+	countWidth := maxInt(
+		len(strconv.Itoa(stats.totalNodes)),
+		len(strconv.Itoa(stats.ephemeralNodes)),
+		len(strconv.Itoa(stats.emptyNodes)),
+	)
+	avgRounded := int(math.Round(avgSize))
+	sizeWidth := maxLen([]string{
+		strconv.Itoa(avgRounded),
+		strconv.Itoa(stats.biggestSize),
+	})
+	m.statsText = strings.Join([]string{
+		"Snapshot Statistics",
+		"",
+		fmt.Sprintf("%-*s: %*d", labelWidth, "Total nodes", countWidth, stats.totalNodes),
+		fmt.Sprintf("%-*s: %*d", labelWidth, "Ephemeral nodes", countWidth, stats.ephemeralNodes),
+		fmt.Sprintf("%-*s: %*d", labelWidth, "Empty nodes", countWidth, stats.emptyNodes),
+		"",
+		fmt.Sprintf("Average node: %*d bytes", sizeWidth, avgRounded),
+		fmt.Sprintf("Biggest node: %*d bytes at %s", sizeWidth, stats.biggestSize, stats.biggestPath),
+		"",
+		"Press any key to close.",
+	}, "\n")
+	m.statsOpen = true
+}
+
+func collectSnapshotStats(tree *snapshot.Tree) snapshotStats {
+	stats := snapshotStats{biggestPath: "/"}
+	if tree == nil || tree.Root == nil {
+		return stats
+	}
+
+	var walk func(node *snapshot.Node)
+	walk = func(node *snapshot.Node) {
+		stats.totalNodes++
+		size := len(node.Data)
+		stats.totalSize += size
+		if node.Stat.EphemeralOwner != 0 {
+			stats.ephemeralNodes++
+		}
+		if size == 0 {
+			stats.emptyNodes++
+		}
+		if size > stats.biggestSize {
+			stats.biggestSize = size
+			stats.biggestPath = printablePath(node.Path)
+		}
+		for _, child := range node.Children {
+			walk(child)
+		}
+	}
+	walk(tree.Root)
+
+	return stats
+}
+
+func (m Model) renderStatsDialog() string {
+	totalWidth, _, _ := m.layout()
+	dialogWidth := totalWidth - 2
+	if dialogWidth < 32 {
+		dialogWidth = 32
+	}
+	lines := strings.Split(m.statsText, "\n")
+	for i := range lines {
+		lines[i] = truncate(lines[i], dialogWidth)
+		lines[i] = styleStatsLine(lines[i])
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.DoubleBorder()).
+		BorderForeground(lipgloss.Color("214")).
+		Width(dialogWidth).
+		Render(strings.Join(lines, "\n"))
+}
+
+func styleStatsLine(line string) string {
+	labels := map[string]struct{}{
+		"Snapshot Statistics":     {},
+		"Total nodes":             {},
+		"Ephemeral nodes":         {},
+		"Empty nodes":             {},
+		"Average node":            {},
+		"Biggest node":            {},
+		"Press any key to close.": {},
+	}
+	if idx := strings.Index(line, ":"); idx > 0 {
+		label := strings.TrimRight(line[:idx], " ")
+		if _, ok := labels[label]; ok {
+			return statsLabelStyle.Render(line[:idx]) + line[idx:]
+		}
+	}
+	if _, ok := labels[line]; ok {
+		return statsLabelStyle.Render(line)
+	}
+	return line
+}
+
+func maxInt(a, b, c int) int {
+	m := a
+	if b > m {
+		m = b
+	}
+	if c > m {
+		m = c
+	}
+	return m
+}
+
+func maxLen(values []string) int {
+	max := 0
+	for _, v := range values {
+		if len(v) > max {
+			max = len(v)
+		}
+	}
+	return max
 }
