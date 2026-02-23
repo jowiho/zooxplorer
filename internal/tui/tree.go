@@ -134,7 +134,7 @@ func formatTreeTableHeader(width int) string {
 		subtreeW,
 		"Subtree size",
 		childW,
-		"Child count",
+		"Children",
 	)
 }
 
