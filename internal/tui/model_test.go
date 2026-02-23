@@ -136,6 +136,42 @@ func TestModelTreeScrollOffsetTracksSelection(t *testing.T) {
 	}
 }
 
+func TestTreeScrollDownFromBottomVisibleRow(t *testing.T) {
+	root := &snapshot.Node{ID: "/", Path: ""}
+	nodes := make([]*snapshot.Node, 0, 8)
+	for i := 0; i < 8; i++ {
+		n := &snapshot.Node{ID: string(rune('a' + i)), Path: "/n" + string(rune('a'+i)), Parent: root}
+		nodes = append(nodes, n)
+	}
+	root.Children = nodes
+
+	model := NewModel(&snapshot.Tree{Root: root})
+	var m tea.Model = model
+	// With height=8, visible tree rows should be 5 (after status bar + borders).
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+
+	for i := 0; i < 4; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	typed := m.(Model)
+	if typed.selected != nodes[4] {
+		t.Fatalf("expected selection at last visible row node, got %q", typed.selected.Path)
+	}
+	if typed.treeOffset != 0 {
+		t.Fatalf("expected offset 0 before overflow move, got %d", typed.treeOffset)
+	}
+
+	// Moving once more should select next node and scroll it into view.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	typed = m.(Model)
+	if typed.selected != nodes[5] {
+		t.Fatalf("expected selection at next node, got %q", typed.selected.Path)
+	}
+	if typed.treeOffset != 1 {
+		t.Fatalf("expected offset 1 after overflow move, got %d", typed.treeOffset)
+	}
+}
+
 func TestModelTabSwitchesFocusAndScrollsContent(t *testing.T) {
 	model := NewModel(sampleSnapshotTree())
 	var m tea.Model = model

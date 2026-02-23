@@ -425,7 +425,8 @@ func (m *Model) adjustTreeOffset() {
 		return
 	}
 	_, _, paneHeight := m.layout()
-	visibleHeight := paneHeight - 2
+	// Keep this in sync with View(): mainHeight = paneHeight - 1, treeInnerHeight = mainHeight - 2.
+	visibleHeight := paneHeight - 3
 	if visibleHeight < 1 {
 		visibleHeight = 1
 	}
