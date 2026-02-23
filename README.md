@@ -18,10 +18,19 @@ The snapshot file path is required.
 - `Left` / `Right`: collapse / expand selected tree node
 - `Tab`: switch focus between tree and content panes
 - `Alt+Up` (Option+Up): jump to parent node in the tree
+- `Ctrl+S`: open snapshot statistics dialog (press any key to close)
 
 ## Quit
 
-- `Ctrl+Q` or `Cmd+Q` (Meta+Q)
+- `Ctrl+C`
+
+## What it shows
+
+- Tree view with expandable/collapsible znodes, sorted alphabetically
+- Node metadata (path, timestamps, size, zxid/cversion/owner fields)
+- ACL section with ACL ID/version and decoded ACL entries
+- Node content with JSON pretty-printing and gzip auto-decompression
+- Scrollable content pane and a bottom status bar with key hints
 
 ## Important disclaimer
 
