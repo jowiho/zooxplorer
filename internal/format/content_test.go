@@ -3,6 +3,7 @@ package format
 import (
 	"bytes"
 	"compress/gzip"
+	"regexp"
 	"strconv"
 	"testing"
 )
@@ -11,7 +12,7 @@ func TestZNodeContentPrettyJSON(t *testing.T) {
 	in := []byte(`{"a":1,"b":{"c":2}}`)
 	got := ZNodeContent(in)
 	want := "{\n  \"a\": 1,\n  \"b\": {\n    \"c\": 2\n  }\n}"
-	if got != want {
+	if stripANSI(got) != want {
 		t.Fatalf("unexpected pretty JSON:\n%s", got)
 	}
 }
@@ -40,7 +41,7 @@ func TestZNodeContentGunzipText(t *testing.T) {
 func TestZNodeContentGunzipJSONPrettyPrint(t *testing.T) {
 	got := ZNodeContent(gzipBytes(t, []byte(`{"a":1}`)))
 	want := "{\n  \"a\": 1\n}"
-	if got != want {
+	if stripANSI(got) != want {
 		t.Fatalf("unexpected pretty JSON:\n%s", got)
 	}
 }
@@ -72,4 +73,9 @@ func gzipBytes(t *testing.T, data []byte) []byte {
 		t.Fatalf("gzip close: %v", err)
 	}
 	return b.Bytes()
+}
+
+func stripANSI(s string) string {
+	re := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return re.ReplaceAllString(s, "")
 }
