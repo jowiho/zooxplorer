@@ -55,8 +55,9 @@ func sortedChildren(children []*snapshot.Node) []*snapshot.Node {
 }
 
 var (
-	treeNodeNameStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	selectedPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	treeNodeNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	selectedRowStyle  = lipgloss.NewStyle().Reverse(true)
+	treeHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )
 
 func renderTree(rows []row, selected *snapshot.Node, width int, expanded map[string]bool) string {
@@ -84,7 +85,12 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 
 	metrics := computeTreeMetrics(rows)
 	lines := make([]string, 0, height)
-	for i := 0; i < height; i++ {
+	lines = append(lines, treeHeaderStyle.Render(formatTreeTableHeader(width)))
+	dataHeight := height - 1
+	if dataHeight < 0 {
+		dataHeight = 0
+	}
+	for i := 0; i < dataHeight; i++ {
 		idx := offset + i
 		if idx >= len(rows) {
 			lines = append(lines, "")
@@ -103,16 +109,70 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 				icon = "-"
 			}
 		}
-		sizeInfo := sizeLabel(r.Node, metrics[r.Node])
+		sizeInfo := sizeLabel(metrics[r.Node])
 		plainPrefix := prefix
-		line := truncate(fmt.Sprintf("%s%s%s %s %s", plainPrefix, indent, icon, r.Node.ID, sizeInfo), width)
-		line = strings.Replace(line, r.Node.ID, treeNodeNameStyle.Render(r.Node.ID), 1)
+		displayName := fmt.Sprintf("%s%s%s %s", plainPrefix, indent, icon, r.Node.ID)
+		line := formatTreeTableRow(displayName, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), width)
 		if selected == r.Node {
-			line = strings.Replace(line, plainPrefix, selectedPrefixStyle.Render(plainPrefix), 1)
+			line = selectedRowStyle.Width(width).Render(padToWidth(line, width))
+		} else {
+			line = strings.Replace(line, r.Node.ID, treeNodeNameStyle.Render(r.Node.ID), 1)
 		}
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func formatTreeTableHeader(width int) string {
+	nameW, nodeW, subtreeW, childW := tableColumnWidths(width)
+	return fmt.Sprintf(
+		"%-*s %*s %*s %*s",
+		nameW,
+		"Node name",
+		nodeW,
+		"Node size",
+		subtreeW,
+		"Subtree size",
+		childW,
+		"Child count",
+	)
+}
+
+func formatTreeTableRow(name string, nodeSizeLabel string, subtreeSize, childCount int, width int) string {
+	nameW, nodeW, subtreeW, childW := tableColumnWidths(width)
+	return fmt.Sprintf(
+		"%-*s %*s %*d %*d",
+		nameW,
+		truncate(name, nameW),
+		nodeW,
+		nodeSizeLabel,
+		subtreeW,
+		subtreeSize,
+		childW,
+		childCount,
+	)
+}
+
+func tableColumnWidths(width int) (nameW, nodeW, subtreeW, childW int) {
+	nodeW = 10
+	subtreeW = 12
+	childW = 11
+	nameW = width - (nodeW + subtreeW + childW + 3)
+	if nameW < 8 {
+		nameW = 8
+	}
+	return nameW, nodeW, subtreeW, childW
+}
+
+func padToWidth(s string, width int) string {
+	if width <= 0 {
+		return s
+	}
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
 }
 
 func computeTreeMetrics(rows []row) map[*snapshot.Node]treeMetrics {
@@ -139,11 +199,8 @@ func computeTreeMetrics(rows []row) map[*snapshot.Node]treeMetrics {
 	return metrics
 }
 
-func sizeLabel(node *snapshot.Node, m treeMetrics) string {
-	if len(node.Children) == 0 {
-		return fmt.Sprintf("[size=%d]", m.nodeSize)
-	}
-	return fmt.Sprintf("[size=%d total=%d children=%d]", m.nodeSize, m.subtreeSize, len(node.Children))
+func sizeLabel(m treeMetrics) string {
+	return fmt.Sprintf("%d", m.nodeSize)
 }
 
 func truncate(s string, max int) string {

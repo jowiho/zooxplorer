@@ -147,14 +147,14 @@ func TestTreeScrollDownFromBottomVisibleRow(t *testing.T) {
 
 	model := NewModel(&snapshot.Tree{Root: root})
 	var m tea.Model = model
-	// With height=8, visible tree rows should be 5 (after status bar + borders).
+	// With height=8, visible tree data rows should be 4 (after status bar, borders, and table header).
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	typed := m.(Model)
-	if typed.selected != nodes[4] {
+	if typed.selected != nodes[3] {
 		t.Fatalf("expected selection at last visible row node, got %q", typed.selected.Path)
 	}
 	if typed.treeOffset != 0 {
@@ -164,7 +164,7 @@ func TestTreeScrollDownFromBottomVisibleRow(t *testing.T) {
 	// Moving once more should select next node and scroll it into view.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	typed = m.(Model)
-	if typed.selected != nodes[5] {
+	if typed.selected != nodes[4] {
 		t.Fatalf("expected selection at next node, got %q", typed.selected.Path)
 	}
 	if typed.treeOffset != 1 {

@@ -425,8 +425,9 @@ func (m *Model) adjustTreeOffset() {
 		return
 	}
 	_, _, paneHeight := m.layout()
-	// Keep this in sync with View(): mainHeight = paneHeight - 1, treeInnerHeight = mainHeight - 2.
-	visibleHeight := paneHeight - 3
+	// Keep this in sync with View(): mainHeight = paneHeight - 1, treeInnerHeight = mainHeight - 2,
+	// and one tree row is consumed by the table header.
+	visibleHeight := paneHeight - 4
 	if visibleHeight < 1 {
 		visibleHeight = 1
 	}

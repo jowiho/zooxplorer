@@ -34,17 +34,20 @@ func TestFlattenAndRenderTree(t *testing.T) {
 
 	view := renderTree(rows, a1, 80, map[string]bool{"/a": true})
 	view = stripANSI(view)
+	if !strings.Contains(view, "Node name") || !strings.Contains(view, "Node size") {
+		t.Fatalf("expected table header in view:\n%s", view)
+	}
 	if !strings.Contains(view, "- a") {
 		t.Fatalf("expected expanded marker in view:\n%s", view)
 	}
 	if !strings.Contains(view, ">     a1") {
 		t.Fatalf("expected selected indicator in view:\n%s", view)
 	}
-	if !strings.Contains(view, "a [size=4 total=6 children=1]") {
-		t.Fatalf("expected parent size metadata in view:\n%s", view)
+	if !strings.Contains(view, "- a") || !strings.Contains(view, "4            6           1") {
+		t.Fatalf("expected parent row values in table:\n%s", view)
 	}
-	if !strings.Contains(view, "a1 [size=2]") {
-		t.Fatalf("expected leaf size metadata in view:\n%s", view)
+	if !strings.Contains(view, "a1") || !strings.Contains(view, "2            2           0") {
+		t.Fatalf("expected leaf row values in table:\n%s", view)
 	}
 }
 
