@@ -32,6 +32,7 @@ type Model struct {
 	tree          *snapshot.Tree
 	selected      *snapshot.Node
 	rows          []row
+	sortOrder     sortColumn
 	expanded      map[string]bool
 	treeOffset    int
 	contentOffset int
@@ -44,10 +45,11 @@ type Model struct {
 
 func NewModel(tree *snapshot.Tree) Model {
 	m := Model{
-		tree:     tree,
-		expanded: make(map[string]bool),
-		focus:    focusTree,
-		width:    120,
+		tree:      tree,
+		expanded:  make(map[string]bool),
+		focus:     focusTree,
+		sortOrder: sortByNodeName,
+		width:     120,
 	}
 	if tree != nil {
 		if len(tree.Root.Children) > 0 {
@@ -65,6 +67,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	needsRowRefresh := false
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -80,6 +83,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s":
 			m.openStatsDialog()
 			return m, nil
+		case "ctrl+o":
+			m.sortOrder = (m.sortOrder + 1) % 5
+			needsRowRefresh = true
 		case "tab":
 			if m.focus == focusTree {
 				m.focus = focusContent
@@ -106,12 +112,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left":
 			if m.focus == focusTree && m.selected != nil {
 				delete(m.expanded, m.selected.Path)
+				needsRowRefresh = true
 			}
 		case "right":
 			if m.focus == focusTree && m.selected != nil && len(m.selected.Children) > 0 {
 				m.expanded[m.selected.Path] = true
+				needsRowRefresh = true
 			}
 		}
+	}
+	if needsRowRefresh {
 		m.refreshRows()
 	}
 	m.adjustTreeOffset()
@@ -134,7 +144,7 @@ func (m Model) View() string {
 	rightInner := rightOuter - 2
 	treeInnerHeight := mainHeight - 2
 
-	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.treeOffset, treeInnerHeight)
+	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.treeOffset, treeInnerHeight)
 	treeStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
 	if m.focus == focusTree {
 		treeStyle = treeStyle.BorderForeground(lipgloss.Color("39"))
@@ -189,7 +199,7 @@ func (m *Model) refreshRows() {
 		m.rows = nil
 		return
 	}
-	m.rows = flatten(m.tree.Root, m.expanded)
+	m.rows = flatten(m.tree.Root, m.expanded, m.sortOrder)
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -625,6 +635,7 @@ func (m Model) renderStatusBar(width int) string {
 		statusKeyStyle.Render("^C") + " Quit",
 		statusKeyStyle.Render("^S") + " Show stats",
 		statusKeyStyle.Render("Tab") + " Switch panels",
+		statusKeyStyle.Render("^O") + " Change sort order",
 	}, " | ")
 	if width < 1 {
 		width = lipgloss.Width(text)

@@ -213,6 +213,26 @@ func TestRenderMetadataIncludesSize(t *testing.T) {
 	}
 }
 
+func TestModelCtrlOCyclesSortColumn(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+
+	expected := []sortColumn{
+		sortByNodeSize,
+		sortBySubtreeSize,
+		sortByChildren,
+		sortByModified,
+		sortByNodeName,
+	}
+	for _, want := range expected {
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+		got := model.(Model).sortOrder
+		if got != want {
+			t.Fatalf("unexpected sort column, got=%v want=%v", got, want)
+		}
+	}
+}
+
 func TestModelAltUpJumpsToParent(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m
