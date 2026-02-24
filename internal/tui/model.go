@@ -20,7 +20,6 @@ const (
 	focusTree focusPane = iota
 	focusContent
 	metadataInnerHeight = 5
-	aclInnerHeight      = 6
 )
 
 var metadataPathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
@@ -182,11 +181,8 @@ func (m Model) View() string {
 		Render(strings.Join(treeLines, "\n"))
 
 	metaInnerHeight := metadataInnerHeight
-	aclInner := aclInnerHeight
-	contentInnerHeight := mainHeight - metaInnerHeight - aclInner - 8
-	if contentInnerHeight < 1 {
-		contentInnerHeight = 1
-	}
+	aclInner := m.aclInnerHeight(rightInner, mainHeight)
+	contentInnerHeight := m.contentInnerHeight()
 
 	metadataLines := m.renderMetadataLines(rightInner, metaInnerHeight)
 	metadataBox := lipgloss.NewStyle().
@@ -211,7 +207,7 @@ func (m Model) View() string {
 		Height(contentInnerHeight).
 		Render(strings.Join(contentLines, "\n"))
 
-	rightPane := lipgloss.JoinVertical(lipgloss.Left, metadataBox, "", aclBox, "", contentBox)
+	rightPane := lipgloss.JoinVertical(lipgloss.Left, metadataBox, aclBox, contentBox)
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, treeBox, " ", rightPane)
 	statusBar := m.renderStatusBar(totalWidth)
 	if !m.statsOpen {
@@ -531,12 +527,7 @@ func (m *Model) scrollContent(delta int) {
 		m.contentOffset = 0
 		return
 	}
-	_, _, paneHeight := m.layout()
-	metaInnerHeight := metadataInnerHeight
-	contentInnerHeight := paneHeight - metaInnerHeight - aclInnerHeight - 8
-	if contentInnerHeight < 1 {
-		contentInnerHeight = 1
-	}
+	contentInnerHeight := m.contentInnerHeight()
 	maxOffset := len(lines) - contentInnerHeight
 	if maxOffset < 0 {
 		maxOffset = 0
@@ -553,12 +544,7 @@ func (m *Model) scrollContent(delta int) {
 
 func (m *Model) adjustContentOffset() {
 	lines := m.renderContentLines(256)
-	_, _, paneHeight := m.layout()
-	metaInnerHeight := metadataInnerHeight
-	contentInnerHeight := paneHeight - metaInnerHeight - aclInnerHeight - 8
-	if contentInnerHeight < 1 {
-		contentInnerHeight = 1
-	}
+	contentInnerHeight := m.contentInnerHeight()
 	maxOffset := len(lines) - contentInnerHeight
 	if maxOffset < 0 {
 		maxOffset = 0
@@ -569,6 +555,38 @@ func (m *Model) adjustContentOffset() {
 	if m.contentOffset < 0 {
 		m.contentOffset = 0
 	}
+}
+
+func (m Model) aclInnerHeight(width, mainHeight int) int {
+	lines := m.renderACLLines(width, math.MaxInt)
+	desired := len(lines)
+	if desired < 1 {
+		desired = 1
+	}
+	// Keep at least one content row visible below metadata+ACL sections.
+	maxACL := mainHeight - metadataInnerHeight - 6 - 1
+	if maxACL < 1 {
+		maxACL = 1
+	}
+	if desired > maxACL {
+		desired = maxACL
+	}
+	return desired
+}
+
+func (m Model) contentInnerHeight() int {
+	_, rightOuter, paneHeight := m.layout()
+	mainHeight := paneHeight - 1
+	if mainHeight < 6 {
+		mainHeight = 6
+	}
+	rightInner := rightOuter - 2
+	aclInner := m.aclInnerHeight(rightInner, mainHeight)
+	contentInnerHeight := mainHeight - metadataInnerHeight - aclInner - 6
+	if contentInnerHeight < 1 {
+		contentInnerHeight = 1
+	}
+	return contentInnerHeight
 }
 
 func scrollbarPosition(windowHeight, contentLen, offset int) (thumbPos int, thumbSize int) {
