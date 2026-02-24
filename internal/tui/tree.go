@@ -194,13 +194,17 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 		sizeInfo := sizeLabel(metrics[r.Node])
 		plainPrefix := prefix
 		displayName := fmt.Sprintf("%s%s%s %s", plainPrefix, indent, icon, r.Node.ID)
-		line := formatTreeTableRow(displayName, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
+		nameW, _, _, _, _ := tableColumnWidths(width)
+		nameCell := truncate(displayName, nameW)
 		if selected == r.Node {
+			line := formatTreeTableRow(nameCell, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
 			line = selectedRowStyle.Width(width).Render(padToWidth(line, width))
+			lines = append(lines, line)
 		} else {
-			line = strings.Replace(line, r.Node.ID, treeNodeNameStyle.Render(r.Node.ID), 1)
+			nameCell = styleNodeNameCell(nameCell, plainPrefix, indent, icon)
+			line := formatTreeTableRow(nameCell, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
+			lines = append(lines, line)
 		}
-		lines = append(lines, line)
 	}
 	return lines
 }
@@ -234,10 +238,10 @@ func sortedHeaderLabel(label string, col, active sortColumn, descending bool) st
 
 func formatTreeTableRow(name string, nodeSizeLabel string, subtreeSize, childCount int, mtime int64, width int) string {
 	nameW, nodeW, subtreeW, childW, modifiedW := tableColumnWidths(width)
+	nameCol := padToWidthANSI(name, nameW)
 	return fmt.Sprintf(
-		"%-*s %*s %*d %*d %-*s",
-		nameW,
-		truncate(name, nameW),
+		"%s %*s %*d %*d %-*s",
+		nameCol,
 		nodeW,
 		nodeSizeLabel,
 		subtreeW,
@@ -270,6 +274,18 @@ func padToWidth(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-w)
+}
+
+func styleNodeNameCell(nameCell, prefix string, depthIndent string, icon string) string {
+	prefixText := fmt.Sprintf("%s%s%s ", prefix, depthIndent, icon)
+	if !strings.HasPrefix(nameCell, prefixText) {
+		return nameCell
+	}
+	visibleName := strings.TrimPrefix(nameCell, prefixText)
+	if visibleName == "" {
+		return nameCell
+	}
+	return prefixText + treeNodeNameStyle.Render(visibleName)
 }
 
 func formatMTimeISO(millis int64) string {
