@@ -10,9 +10,9 @@ import (
 
 func TestFlattenAndRenderTree(t *testing.T) {
 	root := &snapshot.Node{ID: "/", Path: ""}
-	b := &snapshot.Node{ID: "b", Path: "/b", Parent: root, Data: []byte("bbb")}
-	a := &snapshot.Node{ID: "a", Path: "/a", Parent: root, Data: []byte("aaaa")}
-	a1 := &snapshot.Node{ID: "a1", Path: "/a/a1", Parent: a, Data: []byte("cc")}
+	b := &snapshot.Node{ID: "b", Path: "/b", Parent: root, Data: []byte("bbb"), Stat: snapshot.StatPersisted{Mtime: 0}}
+	a := &snapshot.Node{ID: "a", Path: "/a", Parent: root, Data: []byte("aaaa"), Stat: snapshot.StatPersisted{Mtime: 1000}}
+	a1 := &snapshot.Node{ID: "a1", Path: "/a/a1", Parent: a, Data: []byte("cc"), Stat: snapshot.StatPersisted{Mtime: 2000}}
 	root.Children = []*snapshot.Node{b, a}
 	a.Children = []*snapshot.Node{a1}
 
@@ -34,7 +34,7 @@ func TestFlattenAndRenderTree(t *testing.T) {
 
 	view := renderTree(rows, a1, 80, map[string]bool{"/a": true})
 	view = stripANSI(view)
-	if !strings.Contains(view, "Node name") || !strings.Contains(view, "Node size") {
+	if !strings.Contains(view, "Node name") || !strings.Contains(view, "Node size") || !strings.Contains(view, "Modified") {
 		t.Fatalf("expected table header in view:\n%s", view)
 	}
 	if !strings.Contains(view, "- a") {
@@ -43,10 +43,10 @@ func TestFlattenAndRenderTree(t *testing.T) {
 	if !strings.Contains(view, ">     a1") {
 		t.Fatalf("expected selected indicator in view:\n%s", view)
 	}
-	if !strings.Contains(view, "- a") || !strings.Contains(view, "4            6           1") {
+	if !strings.Contains(view, "- a") || !strings.Contains(view, "4            6           1") || !strings.Contains(view, "1970-01-01T00:00:01Z") {
 		t.Fatalf("expected parent row values in table:\n%s", view)
 	}
-	if !strings.Contains(view, "a1") || !strings.Contains(view, "2            2           0") {
+	if !strings.Contains(view, "a1") || !strings.Contains(view, "2            2           0") || !strings.Contains(view, "1970-01-01T00:00:02Z") {
 		t.Fatalf("expected leaf row values in table:\n%s", view)
 	}
 }

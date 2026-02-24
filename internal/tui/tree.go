@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jowiho/zooxplorer/internal/snapshot"
@@ -112,7 +113,7 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 		sizeInfo := sizeLabel(metrics[r.Node])
 		plainPrefix := prefix
 		displayName := fmt.Sprintf("%s%s%s %s", plainPrefix, indent, icon, r.Node.ID)
-		line := formatTreeTableRow(displayName, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), width)
+		line := formatTreeTableRow(displayName, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
 		if selected == r.Node {
 			line = selectedRowStyle.Width(width).Render(padToWidth(line, width))
 		} else {
@@ -124,9 +125,9 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 }
 
 func formatTreeTableHeader(width int) string {
-	nameW, nodeW, subtreeW, childW := tableColumnWidths(width)
+	nameW, nodeW, subtreeW, childW, modifiedW := tableColumnWidths(width)
 	return fmt.Sprintf(
-		"%-*s %*s %*s %*s",
+		"%-*s %*s %*s %*s %*s",
 		nameW,
 		"Node name",
 		nodeW,
@@ -135,13 +136,15 @@ func formatTreeTableHeader(width int) string {
 		"Subtree size",
 		childW,
 		"Children",
+		modifiedW,
+		"Modified",
 	)
 }
 
-func formatTreeTableRow(name string, nodeSizeLabel string, subtreeSize, childCount int, width int) string {
-	nameW, nodeW, subtreeW, childW := tableColumnWidths(width)
+func formatTreeTableRow(name string, nodeSizeLabel string, subtreeSize, childCount int, mtime int64, width int) string {
+	nameW, nodeW, subtreeW, childW, modifiedW := tableColumnWidths(width)
 	return fmt.Sprintf(
-		"%-*s %*s %*d %*d",
+		"%-*s %*s %*d %*d %-*s",
 		nameW,
 		truncate(name, nameW),
 		nodeW,
@@ -150,18 +153,21 @@ func formatTreeTableRow(name string, nodeSizeLabel string, subtreeSize, childCou
 		subtreeSize,
 		childW,
 		childCount,
+		modifiedW,
+		formatMTimeISO(mtime),
 	)
 }
 
-func tableColumnWidths(width int) (nameW, nodeW, subtreeW, childW int) {
+func tableColumnWidths(width int) (nameW, nodeW, subtreeW, childW, modifiedW int) {
 	nodeW = 10
 	subtreeW = 12
 	childW = 11
-	nameW = width - (nodeW + subtreeW + childW + 3)
+	modifiedW = 20
+	nameW = width - (nodeW + subtreeW + childW + modifiedW + 4)
 	if nameW < 8 {
 		nameW = 8
 	}
-	return nameW, nodeW, subtreeW, childW
+	return nameW, nodeW, subtreeW, childW, modifiedW
 }
 
 func padToWidth(s string, width int) string {
@@ -173,6 +179,10 @@ func padToWidth(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-w)
+}
+
+func formatMTimeISO(millis int64) string {
+	return time.UnixMilli(millis).UTC().Format(time.RFC3339)
 }
 
 func computeTreeMetrics(rows []row) map[*snapshot.Node]treeMetrics {
