@@ -340,6 +340,49 @@ func TestModelCtrlSShowsStatsAndAnyKeyCloses(t *testing.T) {
 	}
 }
 
+func TestModelPageHomeEndNavigation(t *testing.T) {
+	root := &snapshot.Node{ID: "/", Path: ""}
+	nodes := make([]*snapshot.Node, 0, 12)
+	for i := 0; i < 12; i++ {
+		n := &snapshot.Node{ID: string(rune('a' + i)), Path: "/n" + string(rune('a'+i)), Parent: root}
+		nodes = append(nodes, n)
+	}
+	root.Children = nodes
+
+	model := NewModel(&snapshot.Tree{Root: root})
+	var m tea.Model = model
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 8}) // page step = 4 rows
+
+	typed := m.(Model)
+	if typed.selected != nodes[0] {
+		t.Fatalf("expected initial selection on first row")
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	typed = m.(Model)
+	if typed.selected != nodes[4] {
+		t.Fatalf("expected page down to move to index 4, got %q", typed.selected.Path)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	typed = m.(Model)
+	if typed.selected != nodes[0] {
+		t.Fatalf("expected page up to move back to index 0, got %q", typed.selected.Path)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	typed = m.(Model)
+	if typed.selected != nodes[len(nodes)-1] {
+		t.Fatalf("expected end to select last row, got %q", typed.selected.Path)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	typed = m.(Model)
+	if typed.selected != nodes[0] {
+		t.Fatalf("expected home to select first row, got %q", typed.selected.Path)
+	}
+}
+
 func sampleSnapshotTree() *snapshot.Tree {
 	root := &snapshot.Node{ID: "/", Path: ""}
 	a := &snapshot.Node{

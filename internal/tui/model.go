@@ -109,6 +109,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.moveSelection(-1)
 			}
+		case "pgup":
+			if m.focus == focusTree {
+				m.moveSelectionPage(-1)
+			}
 		case "alt+up", "meta+up":
 			if m.focus == focusTree {
 				m.selected = visibleParentNode(m.selected)
@@ -119,6 +123,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scrollContent(1)
 			} else {
 				m.moveSelection(1)
+			}
+		case "pgdown":
+			if m.focus == focusTree {
+				m.moveSelectionPage(1)
+			}
+		case "home":
+			if m.focus == focusTree {
+				m.moveSelectionToBoundary(true)
+			}
+		case "end":
+			if m.focus == focusTree {
+				m.moveSelectionToBoundary(false)
 			}
 		case "left":
 			if m.focus == focusTree && m.selected != nil {
@@ -226,6 +242,33 @@ func (m *Model) moveSelection(delta int) {
 		return
 	}
 	m.selected = m.rows[next].Node
+	m.contentOffset = 0
+}
+
+func (m *Model) moveSelectionPage(direction int) {
+	if len(m.rows) == 0 || m.selected == nil {
+		return
+	}
+	step := m.treeVisibleDataRows()
+	if step < 1 {
+		step = 1
+	}
+	if direction < 0 {
+		m.moveSelection(-step)
+		return
+	}
+	m.moveSelection(step)
+}
+
+func (m *Model) moveSelectionToBoundary(toStart bool) {
+	if len(m.rows) == 0 {
+		return
+	}
+	if toStart {
+		m.selected = m.rows[0].Node
+	} else {
+		m.selected = m.rows[len(m.rows)-1].Node
+	}
 	m.contentOffset = 0
 }
 
@@ -446,10 +489,7 @@ func (m *Model) adjustTreeOffset() {
 		m.treeOffset = 0
 		return
 	}
-	_, _, paneHeight := m.layout()
-	// Keep this in sync with View(): mainHeight = paneHeight - 1, treeInnerHeight = mainHeight - 2,
-	// and one tree row is consumed by the table header.
-	visibleHeight := paneHeight - 4
+	visibleHeight := m.treeVisibleDataRows()
 	if visibleHeight < 1 {
 		visibleHeight = 1
 	}
@@ -476,6 +516,13 @@ func (m *Model) adjustTreeOffset() {
 	if m.treeOffset < 0 {
 		m.treeOffset = 0
 	}
+}
+
+func (m *Model) treeVisibleDataRows() int {
+	_, _, paneHeight := m.layout()
+	// Keep this in sync with View(): mainHeight = paneHeight - 1, treeInnerHeight = mainHeight - 2,
+	// and one tree row is consumed by the table header.
+	return paneHeight - 4
 }
 
 func (m *Model) scrollContent(delta int) {
