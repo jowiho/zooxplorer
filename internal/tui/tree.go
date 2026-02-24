@@ -30,7 +30,7 @@ type treeMetrics struct {
 	subtreeSize int
 }
 
-func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn) []row {
+func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn, descending bool) []row {
 	if root == nil {
 		return nil
 	}
@@ -39,7 +39,7 @@ func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn) []
 	if order == sortByNodeSize || order == sortByModified {
 		all := flattenAllNodes(root)
 		sort.Slice(all, func(i, j int) bool {
-			return lessNodes(all[i], all[j], order, metrics)
+			return lessNodes(all[i], all[j], order, descending, metrics)
 		})
 		out := make([]row, 0, len(all))
 		for _, node := range all {
@@ -55,13 +55,13 @@ func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn) []
 		if !expanded[n.Path] {
 			return
 		}
-		for _, child := range sortedChildren(n.Children, order, metrics) {
+		for _, child := range sortedChildren(n.Children, order, descending, metrics) {
 			walk(child, depth+1)
 		}
 	}
 
 	// Root is implicit; the tree starts at top-level znodes.
-	for _, child := range sortedChildren(root.Children, order, metrics) {
+	for _, child := range sortedChildren(root.Children, order, descending, metrics) {
 		walk(child, 0)
 	}
 	return out
@@ -82,41 +82,50 @@ func flattenAllNodes(root *snapshot.Node) []*snapshot.Node {
 	return out
 }
 
-func sortedChildren(children []*snapshot.Node, order sortColumn, metrics map[*snapshot.Node]treeMetrics) []*snapshot.Node {
+func sortedChildren(children []*snapshot.Node, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics) []*snapshot.Node {
 	sorted := make([]*snapshot.Node, len(children))
 	copy(sorted, children)
 	sort.Slice(sorted, func(i, j int) bool {
-		return lessNodes(sorted[i], sorted[j], order, metrics)
+		return lessNodes(sorted[i], sorted[j], order, descending, metrics)
 	})
 	return sorted
 }
 
-func lessNodes(left, right *snapshot.Node, order sortColumn, metrics map[*snapshot.Node]treeMetrics) bool {
+func lessNodes(left, right *snapshot.Node, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics) bool {
+	compare := 0
 	switch order {
+	case sortByNodeName:
+		compare = strings.Compare(left.ID, right.ID)
 	case sortByNodeSize:
-		if len(left.Data) != len(right.Data) {
-			return len(left.Data) > len(right.Data)
-		}
+		compare = len(left.Data) - len(right.Data)
 	case sortBySubtreeSize:
-		if metrics[left].subtreeSize != metrics[right].subtreeSize {
-			return metrics[left].subtreeSize > metrics[right].subtreeSize
-		}
+		compare = metrics[left].subtreeSize - metrics[right].subtreeSize
 	case sortByChildren:
-		if len(left.Children) != len(right.Children) {
-			return len(left.Children) > len(right.Children)
-		}
+		compare = len(left.Children) - len(right.Children)
 	case sortByModified:
-		if left.Stat.Mtime != right.Stat.Mtime {
-			return left.Stat.Mtime < right.Stat.Mtime
-		}
-	default:
-		if left.ID != right.ID {
-			return left.ID < right.ID
+		switch {
+		case left.Stat.Mtime < right.Stat.Mtime:
+			compare = -1
+		case left.Stat.Mtime > right.Stat.Mtime:
+			compare = 1
 		}
 	}
 
+	if compare != 0 {
+		if descending {
+			return compare > 0
+		}
+		return compare < 0
+	}
+
 	if left.ID != right.ID {
+		if descending {
+			return left.ID > right.ID
+		}
 		return left.ID < right.ID
+	}
+	if descending {
+		return left.Path > right.Path
 	}
 	return left.Path < right.Path
 }
@@ -125,22 +134,18 @@ func isFlatMode(order sortColumn) bool {
 	return order == sortByNodeSize || order == sortByModified
 }
 
-func isDescendingSort(order sortColumn) bool {
-	return order == sortByNodeSize || order == sortBySubtreeSize || order == sortByChildren
-}
-
 var (
 	treeNodeNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	selectedRowStyle  = lipgloss.NewStyle().Reverse(true)
 	treeHeaderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )
 
-func renderTree(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn) string {
-	lines := renderTreeWindow(rows, selected, width, expanded, order, 0, len(rows))
+func renderTree(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool) string {
+	lines := renderTreeWindow(rows, selected, width, expanded, order, descending, 0, len(rows))
 	return strings.Join(lines, "\n")
 }
 
-func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, offset, height int) []string {
+func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool, offset, height int) []string {
 	if width < 10 {
 		width = 10
 	}
@@ -160,7 +165,7 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 
 	metrics := computeTreeMetrics(rows)
 	lines := make([]string, 0, height)
-	lines = append(lines, treeHeaderStyle.Render(formatTreeTableHeader(width, order)))
+	lines = append(lines, treeHeaderStyle.Render(formatTreeTableHeader(width, order, descending)))
 	dataHeight := height - 1
 	if dataHeight < 0 {
 		dataHeight = 0
@@ -200,26 +205,26 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 	return lines
 }
 
-func formatTreeTableHeader(width int, order sortColumn) string {
+func formatTreeTableHeader(width int, order sortColumn, descending bool) string {
 	nameW, nodeW, subtreeW, childW, modifiedW := tableColumnWidths(width)
 	return fmt.Sprintf(
 		"%-*s %*s %*s %*s %*s",
 		nameW,
-		sortedHeaderLabel("Node name", sortByNodeName, order),
+		sortedHeaderLabel("Node name", sortByNodeName, order, descending),
 		nodeW,
-		sortedHeaderLabel("Node size", sortByNodeSize, order),
+		sortedHeaderLabel("Node size", sortByNodeSize, order, descending),
 		subtreeW,
-		sortedHeaderLabel("Subtree size", sortBySubtreeSize, order),
+		sortedHeaderLabel("Subtree size", sortBySubtreeSize, order, descending),
 		childW,
-		sortedHeaderLabel("Children", sortByChildren, order),
+		sortedHeaderLabel("Children", sortByChildren, order, descending),
 		modifiedW,
-		sortedHeaderLabel("Modified", sortByModified, order),
+		sortedHeaderLabel("Modified", sortByModified, order, descending),
 	)
 }
 
-func sortedHeaderLabel(label string, col, active sortColumn) string {
+func sortedHeaderLabel(label string, col, active sortColumn, descending bool) string {
 	if col == active {
-		if isDescendingSort(col) {
+		if descending {
 			return "▼ " + label
 		}
 		return "▲ " + label

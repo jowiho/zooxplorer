@@ -233,6 +233,34 @@ func TestModelCtrlOCyclesSortColumn(t *testing.T) {
 	}
 }
 
+func TestModelCtrlRReversesCurrentSortOrder(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+
+	typed := model.(Model)
+	if typed.sortDesc[sortByNodeName] {
+		t.Fatal("expected node-name sort ascending by default")
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	typed = model.(Model)
+	if !typed.sortDesc[sortByNodeName] {
+		t.Fatal("expected node-name sort reversed to descending")
+	}
+
+	// Switch to node-size (default descending) and reverse.
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	typed = model.(Model)
+	if !typed.sortDesc[sortByNodeSize] {
+		t.Fatal("expected node-size sort descending by default")
+	}
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	typed = model.(Model)
+	if typed.sortDesc[sortByNodeSize] {
+		t.Fatal("expected node-size sort reversed to ascending")
+	}
+}
+
 func TestModelAltUpJumpsToParent(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m

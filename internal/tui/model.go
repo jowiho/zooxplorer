@@ -33,6 +33,7 @@ type Model struct {
 	selected      *snapshot.Node
 	rows          []row
 	sortOrder     sortColumn
+	sortDesc      [5]bool
 	expanded      map[string]bool
 	treeOffset    int
 	contentOffset int
@@ -49,7 +50,14 @@ func NewModel(tree *snapshot.Tree) Model {
 		expanded:  make(map[string]bool),
 		focus:     focusTree,
 		sortOrder: sortByNodeName,
-		width:     120,
+		sortDesc: [5]bool{
+			sortByNodeName:    false,
+			sortByNodeSize:    true,
+			sortBySubtreeSize: true,
+			sortByChildren:    true,
+			sortByModified:    false,
+		},
+		width: 120,
 	}
 	if tree != nil {
 		if len(tree.Root.Children) > 0 {
@@ -85,6 +93,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+o":
 			m.sortOrder = (m.sortOrder + 1) % 5
+			needsRowRefresh = true
+		case "ctrl+r":
+			m.sortDesc[m.sortOrder] = !m.sortDesc[m.sortOrder]
 			needsRowRefresh = true
 		case "tab":
 			if m.focus == focusTree {
@@ -144,7 +155,7 @@ func (m Model) View() string {
 	rightInner := rightOuter - 2
 	treeInnerHeight := mainHeight - 2
 
-	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.treeOffset, treeInnerHeight)
+	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder], m.treeOffset, treeInnerHeight)
 	treeStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
 	if m.focus == focusTree {
 		treeStyle = treeStyle.BorderForeground(lipgloss.Color("39"))
@@ -199,7 +210,7 @@ func (m *Model) refreshRows() {
 		m.rows = nil
 		return
 	}
-	m.rows = flatten(m.tree.Root, m.expanded, m.sortOrder)
+	m.rows = flatten(m.tree.Root, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder])
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -636,6 +647,7 @@ func (m Model) renderStatusBar(width int) string {
 		statusKeyStyle.Render("^S") + " Show stats",
 		statusKeyStyle.Render("Tab") + " Switch panels",
 		statusKeyStyle.Render("^O") + " Change sort order",
+		statusKeyStyle.Render("^R") + " Reverse sort order",
 	}, " | ")
 	if width < 1 {
 		width = lipgloss.Width(text)
