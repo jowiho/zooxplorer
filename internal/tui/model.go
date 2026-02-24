@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -239,7 +240,7 @@ func (m Model) renderContent(width int) string {
 	}
 	lines := strings.Split(body, "\n")
 	for i := range lines {
-		lines[i] = truncate(lines[i], width)
+		lines[i] = truncateANSI(lines[i], width)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -404,9 +405,9 @@ func (m Model) renderContentWindowLines(width, height int) []string {
 		idx := offset + i
 		line := ""
 		if idx >= 0 && idx < len(lines) {
-			line = truncate(lines[idx], textWidth)
+			line = truncateANSI(lines[idx], textWidth)
 		}
-		line = padRight(line, textWidth)
+		line = padToWidthANSI(line, textWidth)
 		if needsScroll {
 			bar := "│"
 			if i >= thumbPos && i < thumbPos+thumbSize {
@@ -563,6 +564,60 @@ func padRight(s string, n int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", n-len(s))
+}
+
+func padToWidthANSI(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func truncateANSI(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+
+	var b strings.Builder
+	width := 0
+	usedANSI := false
+	for i := 0; i < len(s); {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			usedANSI = true
+			j := i + 2
+			for j < len(s) {
+				c := s[j]
+				if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+					j++
+					break
+				}
+				j++
+			}
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			break
+		}
+		rw := lipgloss.Width(string(r))
+		if width+rw > max {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+		i += size
+	}
+	if usedANSI {
+		b.WriteString("\x1b[0m")
+	}
+	return b.String()
 }
 
 func (m Model) renderStatusBar(width int) string {
