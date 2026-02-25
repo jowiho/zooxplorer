@@ -7,7 +7,7 @@ Zooxplorer is a simple TUI app to explore a ZooKeeper snapshot file.
 ## Run from the command line
 
 ```bash
-go run ./cmd/zooxplorer ./path/to/snapshot.file
+./zooxplorer path/to/snapshot.file
 ```
 
 The snapshot file path is required.
