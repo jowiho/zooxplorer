@@ -30,11 +30,13 @@ type treeMetrics struct {
 	subtreeSize int
 }
 
-func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn, descending bool) []row {
+func flatten(root *snapshot.Node, expanded map[string]bool, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics) []row {
 	if root == nil {
 		return nil
 	}
-	metrics := buildTreeMetrics(root)
+	if metrics == nil {
+		metrics = buildTreeMetrics(root)
+	}
 
 	if order == sortByNodeSize || order == sortByModified {
 		all := flattenAllNodes(root)
@@ -141,11 +143,11 @@ var (
 )
 
 func renderTree(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool) string {
-	lines := renderTreeWindow(rows, selected, width, expanded, order, descending, 0, len(rows))
+	lines := renderTreeWindow(rows, selected, width, expanded, order, descending, nil, 0, len(rows))
 	return strings.Join(lines, "\n")
 }
 
-func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool, offset, height int) []string {
+func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics, offset, height int) []string {
 	if width < 10 {
 		width = 10
 	}
@@ -163,7 +165,9 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 		offset = maxOffset
 	}
 
-	metrics := computeTreeMetrics(rows)
+	if metrics == nil {
+		metrics = computeTreeMetrics(rows)
+	}
 	lines := make([]string, 0, height)
 	lines = append(lines, treeHeaderStyle.Render(formatTreeTableHeader(width, order, descending)))
 	dataHeight := height - 1

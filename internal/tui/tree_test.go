@@ -16,7 +16,7 @@ func TestFlattenAndRenderTree(t *testing.T) {
 	root.Children = []*snapshot.Node{b, a}
 	a.Children = []*snapshot.Node{a1}
 
-	rows := flatten(root, map[string]bool{}, sortByNodeName, false)
+	rows := flatten(root, map[string]bool{}, sortByNodeName, false, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -24,7 +24,7 @@ func TestFlattenAndRenderTree(t *testing.T) {
 		t.Fatalf("unexpected row at index 0: %#v", rows[0])
 	}
 
-	rows = flatten(root, map[string]bool{"/a": true}, sortByNodeName, false)
+	rows = flatten(root, map[string]bool{"/a": true}, sortByNodeName, false, nil)
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows after expand, got %d", len(rows))
 	}
@@ -59,7 +59,7 @@ func TestFlattenSortByNodeSize(t *testing.T) {
 	root.Children = []*snapshot.Node{a, b}
 	a.Children = []*snapshot.Node{a1}
 
-	rows := flatten(root, map[string]bool{}, sortByNodeSize, true)
+	rows := flatten(root, map[string]bool{}, sortByNodeSize, true, nil)
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
@@ -80,7 +80,7 @@ func TestFlattenSortByModifiedIsGlobalAndFlat(t *testing.T) {
 	root.Children = []*snapshot.Node{a, b}
 	a.Children = []*snapshot.Node{a1}
 
-	rows := flatten(root, map[string]bool{}, sortByModified, false)
+	rows := flatten(root, map[string]bool{}, sortByModified, false, nil)
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}

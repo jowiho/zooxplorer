@@ -31,11 +31,15 @@ type Model struct {
 	tree          *snapshot.Tree
 	selected      *snapshot.Node
 	rows          []row
+	rowIndex      map[*snapshot.Node]int
+	metrics       map[*snapshot.Node]treeMetrics
 	sortOrder     sortColumn
 	sortDesc      [5]bool
 	expanded      map[string]bool
 	treeOffset    int
 	contentOffset int
+	contentLines  []string
+	contentNode   *snapshot.Node
 	focus         focusPane
 	statsOpen     bool
 	statsText     string
@@ -46,6 +50,8 @@ type Model struct {
 func NewModel(tree *snapshot.Tree) Model {
 	m := Model{
 		tree:      tree,
+		rowIndex:  make(map[*snapshot.Node]int),
+		metrics:   make(map[*snapshot.Node]treeMetrics),
 		expanded:  make(map[string]bool),
 		focus:     focusTree,
 		sortOrder: sortByNodeName,
@@ -64,7 +70,9 @@ func NewModel(tree *snapshot.Tree) Model {
 		} else {
 			m.selected = tree.Root
 		}
+		m.metrics = buildTreeMetrics(tree.Root)
 		m.refreshRows()
+		m.refreshContentLines()
 	}
 	return m
 }
@@ -116,6 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusTree {
 				m.selected = visibleParentNode(m.selected)
 				m.contentOffset = 0
+				m.refreshContentLines()
 			}
 		case "down":
 			if m.focus == focusContent {
@@ -151,7 +160,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshRows()
 	}
 	m.adjustTreeOffset()
-	m.adjustContentOffset()
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		m.adjustContentOffset()
+	}
 	return m, nil
 }
 
@@ -170,7 +181,7 @@ func (m Model) View() string {
 	rightInner := rightOuter - 2
 	treeInnerHeight := mainHeight - 2
 
-	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder], m.treeOffset, treeInnerHeight)
+	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder], m.metrics, m.treeOffset, treeInnerHeight)
 	treeStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
 	if m.focus == focusTree {
 		treeStyle = treeStyle.BorderForeground(lipgloss.Color("39"))
@@ -220,9 +231,19 @@ func (m Model) View() string {
 func (m *Model) refreshRows() {
 	if m.tree == nil || m.tree.Root == nil {
 		m.rows = nil
+		m.rowIndex = map[*snapshot.Node]int{}
+		m.metrics = map[*snapshot.Node]treeMetrics{}
 		return
 	}
-	m.rows = flatten(m.tree.Root, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder])
+	if len(m.metrics) == 0 {
+		m.metrics = buildTreeMetrics(m.tree.Root)
+	}
+	m.rows = flatten(m.tree.Root, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder], m.metrics)
+	idx := make(map[*snapshot.Node]int, len(m.rows))
+	for i := range m.rows {
+		idx[m.rows[i].Node] = i
+	}
+	m.rowIndex = idx
 }
 
 func (m *Model) moveSelection(delta int) {
@@ -239,6 +260,7 @@ func (m *Model) moveSelection(delta int) {
 	}
 	m.selected = m.rows[next].Node
 	m.contentOffset = 0
+	m.refreshContentLines()
 }
 
 func (m *Model) moveSelectionPage(direction int) {
@@ -266,15 +288,35 @@ func (m *Model) moveSelectionToBoundary(toStart bool) {
 		m.selected = m.rows[len(m.rows)-1].Node
 	}
 	m.contentOffset = 0
+	m.refreshContentLines()
 }
 
 func (m *Model) selectedRowIndex() int {
-	for i := range m.rows {
-		if m.rows[i].Node == m.selected {
-			return i
-		}
+	if m.rowIndex == nil || m.selected == nil {
+		return -1
+	}
+	if i, ok := m.rowIndex[m.selected]; ok {
+		return i
 	}
 	return -1
+}
+
+func (m *Model) refreshContentLines() {
+	if m.selected == nil {
+		m.contentNode = nil
+		m.contentLines = nil
+		return
+	}
+	if m.contentNode == m.selected {
+		return
+	}
+	m.contentNode = m.selected
+	body := format.ZNodeContent(m.selected.Data)
+	lines := strings.Split(body, "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		lines = nil
+	}
+	m.contentLines = lines
 }
 
 func (m Model) renderMetadata() string {
@@ -291,18 +333,6 @@ func (m Model) renderMetadata() string {
 		format.DataSizeSummary(m.selected.Data),
 		nodeMetadata(m.selected),
 	)
-}
-
-func (m Model) renderContent(width int) string {
-	body := ""
-	if m.selected != nil {
-		body = format.ZNodeContent(m.selected.Data)
-	}
-	lines := strings.Split(body, "\n")
-	for i := range lines {
-		lines[i] = truncateANSI(lines[i], width)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func formatSnapshotTimeUTC(epochMillis int64) string {
@@ -338,15 +368,6 @@ func (m Model) renderMetadataLines(width, height int) []string {
 	}
 	for len(lines) < height {
 		lines = append(lines, "")
-	}
-	return lines
-}
-
-func (m Model) renderContentLines(width int) []string {
-	content := m.renderContent(width)
-	lines := strings.Split(content, "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return nil
 	}
 	return lines
 }
@@ -440,7 +461,7 @@ func (m Model) renderContentWindowLines(width, height int) []string {
 		height = 1
 	}
 
-	lines := m.renderContentLines(width)
+	lines := m.contentLines
 	needsScroll := len(lines) > height
 	textWidth := width
 	if needsScroll && width > 1 {
@@ -522,7 +543,7 @@ func (m *Model) treeVisibleDataRows() int {
 }
 
 func (m *Model) scrollContent(delta int) {
-	lines := m.renderContentLines(256)
+	lines := m.contentLines
 	if len(lines) == 0 {
 		m.contentOffset = 0
 		return
@@ -543,7 +564,7 @@ func (m *Model) scrollContent(delta int) {
 }
 
 func (m *Model) adjustContentOffset() {
-	lines := m.renderContentLines(256)
+	lines := m.contentLines
 	contentInnerHeight := m.contentInnerHeight()
 	maxOffset := len(lines) - contentInnerHeight
 	if maxOffset < 0 {
