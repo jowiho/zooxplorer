@@ -8,12 +8,16 @@ import (
 )
 
 type decoder struct {
-	r   *bufio.Reader
-	off int64
+	r          *bufio.Reader
+	off        int64
+	onProgress func(offset int64)
 }
 
-func newDecoder(r io.Reader) *decoder {
-	return &decoder{r: bufio.NewReader(r)}
+func newDecoder(r io.Reader, onProgress func(offset int64)) *decoder {
+	return &decoder{
+		r:          bufio.NewReader(r),
+		onProgress: onProgress,
+	}
 }
 
 func (d *decoder) Offset() int64 {
@@ -26,6 +30,9 @@ func (d *decoder) readN(n int) ([]byte, error) {
 		return nil, d.wrapErr(err)
 	}
 	d.off += int64(n)
+	if d.onProgress != nil {
+		d.onProgress(d.off)
+	}
 	return buf, nil
 }
 

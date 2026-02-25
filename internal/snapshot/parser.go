@@ -55,13 +55,39 @@ type Tree struct {
 }
 
 func ParseFile(path string) (*Tree, error) {
+	return ParseFileWithProgress(path, nil)
+}
+
+func ParseFileWithProgress(path string, progress func(readBytes, totalBytes int64)) (*Tree, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("open snapshot file: %w", err)
 	}
 	defer f.Close()
 
-	d := newDecoder(f)
+	var total int64
+	if info, statErr := f.Stat(); statErr == nil {
+		total = info.Size()
+	}
+
+	const reportStep int64 = 512 * 1024
+	lastReported := int64(-reportStep)
+	reportProgress := func(read int64) {
+		if progress == nil || total <= 0 {
+			return
+		}
+		if read-lastReported < reportStep && read < total {
+			return
+		}
+		if read > total {
+			read = total
+		}
+		lastReported = read
+		progress(read, total)
+	}
+	reportProgress(0)
+
+	d := newDecoder(f, reportProgress)
 	header, err := parseHeader(d)
 	if err != nil {
 		return nil, err
@@ -85,6 +111,10 @@ func ParseFile(path string) (*Tree, error) {
 		if _, err := d.ReadString(maxStringLen); err != nil {
 			return nil, err
 		}
+	}
+
+	if progress != nil && total > 0 {
+		progress(total, total)
 	}
 
 	return tree, nil
