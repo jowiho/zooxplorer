@@ -29,7 +29,7 @@ The snapshot file path is required.
 # Other
 
 - `Ctrl+S`: open snapshot statistics dialog (press any key to close)
-- `Ctrl+C`: quit application
+- `Ctrl+Q`: quit application
 
 ## What it shows
 

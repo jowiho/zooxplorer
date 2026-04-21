@@ -19,7 +19,7 @@ func TestModelQuitKeys(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 
 	tests := []tea.KeyMsg{
-		{Type: tea.KeyCtrlC},
+		{Type: tea.KeyCtrlQ},
 	}
 
 	for _, key := range tests {
@@ -27,6 +27,41 @@ func TestModelQuitKeys(t *testing.T) {
 		if cmd == nil {
 			t.Fatal("expected quit command")
 		}
+	}
+}
+
+func TestContentCtrlAAndCtrlCCopiesContent(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	copied := ""
+	m.copyContent = func(s string) error {
+		copied = s
+		return nil
+	}
+
+	var model tea.Model = m
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab}) // focus content
+
+	typed := model.(Model)
+	if typed.focus != focusContent {
+		t.Fatalf("expected content focus after tab")
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	typed = model.(Model)
+	if !typed.contentSelect {
+		t.Fatalf("expected content to be selected after ctrl+a")
+	}
+
+	var cmd tea.Cmd
+	model, cmd = model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd != nil {
+		t.Fatalf("expected ctrl+c in content focus to copy, not quit")
+	}
+	if copied == "" {
+		t.Fatalf("expected copied content to be non-empty")
+	}
+	if !strings.Contains(copied, "line1") {
+		t.Fatalf("expected copied content to include node text, got: %q", copied)
 	}
 }
 

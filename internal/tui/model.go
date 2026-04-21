@@ -3,6 +3,9 @@ package tui
 import (
 	"fmt"
 	"math"
+	"os/exec"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +29,8 @@ var metadataPathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bol
 var statsLabelStyle = lipgloss.NewStyle().Bold(true)
 var statusBarStyle = lipgloss.NewStyle().Reverse(true)
 var statusKeyStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
+var contentSelectionStyle = lipgloss.NewStyle().Reverse(true)
+var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type Model struct {
 	tree          *snapshot.Tree
@@ -40,6 +45,8 @@ type Model struct {
 	contentOffset int
 	contentLines  []string
 	contentNode   *snapshot.Node
+	contentSelect bool
+	copyContent   func(string) error
 	focus         focusPane
 	statsOpen     bool
 	statsText     string
@@ -63,6 +70,9 @@ func NewModel(tree *snapshot.Tree) Model {
 			sortByModified:    false,
 		},
 		width: 120,
+		copyContent: func(s string) error {
+			return copyToClipboard(s)
+		},
 	}
 	if tree != nil {
 		if len(tree.Root.Children) > 0 {
@@ -93,8 +103,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
-		case "ctrl+c":
+		case "ctrl+q":
 			return m, tea.Quit
+		case "ctrl+c":
+			if m.focus == focusContent {
+				if m.contentSelect && m.copyContent != nil {
+					_ = m.copyContent(m.selectedContentText())
+				}
+			}
+			return m, nil
+		case "ctrl+a":
+			if m.focus == focusContent {
+				m.contentSelect = true
+			}
+			return m, nil
 		case "ctrl+s":
 			m.openStatsDialog()
 			return m, nil
@@ -113,6 +135,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.focus = focusTree
 			}
+			m.contentSelect = false
 		case "up":
 			if m.focus == focusContent {
 				m.scrollContent(-1)
@@ -263,6 +286,7 @@ func (m *Model) moveSelection(delta int) {
 	}
 	m.selected = m.rows[next].Node
 	m.contentOffset = 0
+	m.contentSelect = false
 	m.refreshContentLines()
 }
 
@@ -291,6 +315,7 @@ func (m *Model) moveSelectionToBoundary(toStart bool) {
 		m.selected = m.rows[len(m.rows)-1].Node
 	}
 	m.contentOffset = 0
+	m.contentSelect = false
 	m.refreshContentLines()
 }
 
@@ -329,6 +354,13 @@ func (m *Model) refreshContentLines() {
 		lines = nil
 	}
 	m.contentLines = lines
+}
+
+func (m Model) selectedContentText() string {
+	if len(m.contentLines) == 0 {
+		return ""
+	}
+	return ansiEscapeRE.ReplaceAllString(strings.Join(m.contentLines, "\n"), "")
 }
 
 func (m Model) renderMetadata() string {
@@ -501,6 +533,9 @@ func (m Model) renderContentWindowLines(width, height int) []string {
 			line = truncateANSI(lines[idx], textWidth)
 		}
 		line = padToWidthANSI(line, textWidth)
+		if m.contentSelect {
+			line = contentSelectionStyle.Width(textWidth).Render(line)
+		}
 		if needsScroll {
 			bar := "│"
 			if i >= thumbPos && i < thumbPos+thumbSize {
@@ -560,6 +595,7 @@ func (m *Model) scrollContent(delta int) {
 		m.contentOffset = 0
 		return
 	}
+	m.contentSelect = false
 	contentInnerHeight := m.contentInnerHeight()
 	maxOffset := len(lines) - contentInnerHeight
 	if maxOffset < 0 {
@@ -573,6 +609,26 @@ func (m *Model) scrollContent(delta int) {
 		next = maxOffset
 	}
 	m.contentOffset = next
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "clip")
+	default:
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command("wl-copy")
+		} else if _, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		} else {
+			cmd = exec.Command("xsel", "--clipboard", "--input")
+		}
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
 
 func (m *Model) adjustContentOffset() {
@@ -740,13 +796,20 @@ func truncateANSI(s string, max int) string {
 }
 
 func (m Model) renderStatusBar(width int) string {
-	text := strings.Join([]string{
-		statusKeyStyle.Render("^C") + " Quit",
+	items := []string{
+		statusKeyStyle.Render("^Q") + " Quit",
 		statusKeyStyle.Render("^S") + " Show stats",
 		statusKeyStyle.Render("Tab") + " Switch panels",
 		statusKeyStyle.Render("^O") + " Change sort order",
 		statusKeyStyle.Render("^R") + " Reverse sort order",
-	}, " | ")
+	}
+	if m.focus == focusContent {
+		items = append(items,
+			statusKeyStyle.Render("^A")+" Select all",
+			statusKeyStyle.Render("^C")+" Copy",
+		)
+	}
+	text := strings.Join(items, " | ")
 	if width < 1 {
 		width = lipgloss.Width(text)
 	}
