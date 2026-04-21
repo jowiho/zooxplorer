@@ -233,6 +233,28 @@ func TestModelCtrlOCyclesSortColumn(t *testing.T) {
 	}
 }
 
+func TestCtrlOSwitchFromFlatToHierarchyKeepsSelectionVisible(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	m.sortOrder = sortByModified // flat mode
+	m.selected = m.tree.NodesByPath["/a/a1"]
+	m.expanded = map[string]bool{}
+	m.refreshRows()
+
+	var model tea.Model = m
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlO}) // -> sortByNodeName (hierarchical)
+	typed := model.(Model)
+
+	if typed.sortOrder != sortByNodeName {
+		t.Fatalf("expected sortByNodeName, got %v", typed.sortOrder)
+	}
+	if !typed.expanded["/a"] {
+		t.Fatalf("expected /a expanded so /a/a1 stays visible")
+	}
+	if typed.selectedRowIndex() == -1 {
+		t.Fatalf("expected selected node to remain visible in hierarchical mode")
+	}
+}
+
 func TestModelCtrlRReversesCurrentSortOrder(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m

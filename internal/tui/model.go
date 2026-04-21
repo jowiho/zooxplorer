@@ -100,6 +100,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+o":
 			m.sortOrder = (m.sortOrder + 1) % 5
+			if !isFlatMode(m.sortOrder) {
+				m.expandSelectedAncestors()
+			}
 			needsRowRefresh = true
 		case "ctrl+r":
 			m.sortDesc[m.sortOrder] = !m.sortDesc[m.sortOrder]
@@ -299,6 +302,15 @@ func (m *Model) selectedRowIndex() int {
 		return i
 	}
 	return -1
+}
+
+func (m *Model) expandSelectedAncestors() {
+	if m.selected == nil {
+		return
+	}
+	for p := m.selected.Parent; p != nil && p.Parent != nil; p = p.Parent {
+		m.expanded[p.Path] = true
+	}
 }
 
 func (m *Model) refreshContentLines() {
