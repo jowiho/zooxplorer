@@ -25,33 +25,52 @@ const (
 	metadataInnerHeight = 5
 )
 
+type searchScope int
+
+const (
+	searchNodes searchScope = iota
+	searchContent
+)
+
 var metadataPathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 var statsLabelStyle = lipgloss.NewStyle().Bold(true)
 var statusBarStyle = lipgloss.NewStyle().Reverse(true)
 var statusKeyStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
 var contentSelectionStyle = lipgloss.NewStyle().Reverse(true)
+var searchMatchStyle = lipgloss.NewStyle().Background(lipgloss.Color("226")).Foreground(lipgloss.Color("0"))
+var searchInputStyle = lipgloss.NewStyle().Reverse(true)
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type Model struct {
-	tree          *snapshot.Tree
-	selected      *snapshot.Node
-	rows          []row
-	rowIndex      map[*snapshot.Node]int
-	metrics       map[*snapshot.Node]treeMetrics
-	sortOrder     sortColumn
-	sortDesc      [5]bool
-	expanded      map[string]bool
-	treeOffset    int
-	contentOffset int
-	contentLines  []string
-	contentNode   *snapshot.Node
-	contentSelect bool
-	copyContent   func(string) error
-	focus         focusPane
-	statsOpen     bool
-	statsText     string
-	width         int
-	height        int
+	tree           *snapshot.Tree
+	selected       *snapshot.Node
+	rows           []row
+	rowIndex       map[*snapshot.Node]int
+	metrics        map[*snapshot.Node]treeMetrics
+	sortOrder      sortColumn
+	sortDesc       [5]bool
+	expanded       map[string]bool
+	treeOffset     int
+	contentOffset  int
+	contentLines   []string
+	contentNode    *snapshot.Node
+	contentSelect  bool
+	copyContent    func(string) error
+	searchOpen     bool
+	searchScope    searchScope
+	searchInput    string
+	lastNodeQuery  string
+	lastBodyQuery  string
+	matchQuery     string
+	matchIndex     int
+	matchNode      *snapshot.Node
+	nodeMatchQuery string
+	nodeMatchNode  *snapshot.Node
+	focus          focusPane
+	statsOpen      bool
+	statsText      string
+	width          int
+	height         int
 }
 
 func NewModel(tree *snapshot.Tree) Model {
@@ -73,6 +92,7 @@ func NewModel(tree *snapshot.Tree) Model {
 		copyContent: func(s string) error {
 			return copyToClipboard(s)
 		},
+		matchIndex: -1,
 	}
 	if tree != nil {
 		if len(tree.Root.Children) > 0 {
@@ -98,6 +118,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if m.searchOpen {
+			switch msg.String() {
+			case "ctrl+q":
+				return m, tea.Quit
+			case "esc":
+				m.searchOpen = false
+				return m, nil
+			case "enter":
+				query := m.searchInput
+				if query != "" {
+					if m.searchScope == searchNodes {
+						m.lastNodeQuery = query
+						m.searchNextNode(query)
+					} else {
+						m.lastBodyQuery = query
+						m.searchNextContent(query)
+					}
+				}
+				m.searchOpen = false
+				return m, nil
+			case "backspace", "ctrl+h":
+				r := []rune(m.searchInput)
+				if len(r) > 0 {
+					m.searchInput = string(r[:len(r)-1])
+				}
+				return m, nil
+			}
+			if msg.Type == tea.KeyRunes {
+				m.searchInput += string(msg.Runes)
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.statsOpen {
 			m.statsOpen = false
 			return m, nil
@@ -119,6 +172,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			m.openStatsDialog()
+			return m, nil
+		case "ctrl+f":
+			m.searchOpen = true
+			if m.focus == focusContent {
+				m.searchScope = searchContent
+				m.searchInput = m.lastBodyQuery
+			} else {
+				m.searchScope = searchNodes
+				m.searchInput = m.lastNodeQuery
+			}
 			return m, nil
 		case "ctrl+o":
 			m.sortOrder = (m.sortOrder + 1) % 5
@@ -207,7 +270,19 @@ func (m Model) View() string {
 	rightInner := rightOuter - 2
 	treeInnerHeight := mainHeight - 2
 
-	treeLines := renderTreeWindow(m.rows, m.selected, leftInner, m.expanded, m.sortOrder, m.sortDesc[m.sortOrder], m.metrics, m.treeOffset, treeInnerHeight)
+	treeLines := renderTreeWindow(
+		m.rows,
+		m.selected,
+		leftInner,
+		m.expanded,
+		m.sortOrder,
+		m.sortDesc[m.sortOrder],
+		m.metrics,
+		m.nodeMatchNode,
+		m.nodeMatchQuery,
+		m.treeOffset,
+		treeInnerHeight,
+	)
 	treeStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder())
 	if m.focus == focusTree {
 		treeStyle = treeStyle.BorderForeground(lipgloss.Color("39"))
@@ -248,7 +323,11 @@ func (m Model) View() string {
 	mainView := lipgloss.JoinHorizontal(lipgloss.Top, treeBox, " ", rightPane)
 	statusBar := m.renderStatusBar(totalWidth)
 	if !m.statsOpen {
-		return mainView + "\n" + statusBar
+		if !m.searchOpen {
+			return mainView + "\n" + statusBar
+		}
+		overlay := lipgloss.Place(totalWidth, mainHeight, lipgloss.Center, lipgloss.Center, m.renderSearchDialog(totalWidth))
+		return overlay + "\n" + statusBar
 	}
 	overlay := lipgloss.Place(totalWidth, mainHeight, lipgloss.Center, lipgloss.Center, m.renderStatsDialog())
 	return overlay + "\n" + statusBar
@@ -287,6 +366,8 @@ func (m *Model) moveSelection(delta int) {
 	m.selected = m.rows[next].Node
 	m.contentOffset = 0
 	m.contentSelect = false
+	m.clearNodeMatch()
+	m.clearContentMatch()
 	m.refreshContentLines()
 }
 
@@ -316,6 +397,8 @@ func (m *Model) moveSelectionToBoundary(toStart bool) {
 	}
 	m.contentOffset = 0
 	m.contentSelect = false
+	m.clearNodeMatch()
+	m.clearContentMatch()
 	m.refreshContentLines()
 }
 
@@ -361,6 +444,187 @@ func (m Model) selectedContentText() string {
 		return ""
 	}
 	return ansiEscapeRE.ReplaceAllString(strings.Join(m.contentLines, "\n"), "")
+}
+
+func (m *Model) clearContentMatch() {
+	m.matchQuery = ""
+	m.matchIndex = -1
+	m.matchNode = nil
+}
+
+func (m *Model) clearNodeMatch() {
+	m.nodeMatchQuery = ""
+	m.nodeMatchNode = nil
+}
+
+func (m *Model) searchNextNode(query string) {
+	if m.tree == nil || m.tree.Root == nil || query == "" {
+		return
+	}
+	nodes := m.depthFirstNodesByName()
+	if len(nodes) == 0 {
+		return
+	}
+	start := -1
+	for i, n := range nodes {
+		if n == m.selected {
+			start = i
+			break
+		}
+	}
+	for step := 1; step <= len(nodes); step++ {
+		idx := (start + step) % len(nodes)
+		node := nodes[idx]
+		if strings.Contains(node.ID, query) {
+			m.selectNode(node)
+			m.centerSelectedRowInTree()
+			m.nodeMatchQuery = query
+			m.nodeMatchNode = node
+			m.clearContentMatch()
+			return
+		}
+		content := plainNodeContent(node)
+		if matchAt := strings.Index(content, query); matchAt >= 0 {
+			m.selectNode(node)
+			m.centerSelectedRowInTree()
+			m.nodeMatchQuery = query
+			m.nodeMatchNode = node
+			m.matchQuery = query
+			m.matchIndex = matchAt
+			m.matchNode = node
+			m.scrollMatchIntoView()
+			return
+		}
+	}
+}
+
+func (m *Model) searchNextContent(query string) {
+	if query == "" || m.selected == nil {
+		return
+	}
+	m.clearNodeMatch()
+	text := m.selectedContentText()
+	if text == "" {
+		return
+	}
+	start := 0
+	if m.matchQuery == query && m.matchNode == m.selected && m.matchIndex >= 0 {
+		start = m.matchIndex + len(query)
+		if start > len(text) {
+			start = len(text)
+		}
+	}
+	matchAt := -1
+	if start < len(text) {
+		if idx := strings.Index(text[start:], query); idx >= 0 {
+			matchAt = start + idx
+		}
+	}
+	if matchAt < 0 {
+		matchAt = strings.Index(text, query)
+	}
+	if matchAt < 0 {
+		return
+	}
+	m.matchQuery = query
+	m.matchIndex = matchAt
+	m.matchNode = m.selected
+	m.scrollMatchIntoView()
+}
+
+func (m *Model) selectNode(node *snapshot.Node) {
+	if node == nil {
+		return
+	}
+	m.selected = node
+	m.contentOffset = 0
+	m.contentSelect = false
+	m.expandSelectedAncestors()
+	m.refreshRows()
+	m.refreshContentLines()
+	m.adjustTreeOffset()
+}
+
+func (m *Model) centerSelectedRowInTree() {
+	if len(m.rows) == 0 {
+		m.treeOffset = 0
+		return
+	}
+	sel := m.selectedRowIndex()
+	if sel < 0 {
+		return
+	}
+	visible := m.treeVisibleDataRows()
+	if visible < 1 {
+		visible = 1
+	}
+	target := sel - visible/2
+	if target < 0 {
+		target = 0
+	}
+	maxOffset := len(m.rows) - visible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if target > maxOffset {
+		target = maxOffset
+	}
+	m.treeOffset = target
+}
+
+func (m Model) depthFirstNodesByName() []*snapshot.Node {
+	if m.tree == nil || m.tree.Root == nil {
+		return nil
+	}
+	if len(m.metrics) == 0 {
+		return flattenAllNodes(m.tree.Root)
+	}
+	out := make([]*snapshot.Node, 0, 256)
+	var walk func(node *snapshot.Node)
+	walk = func(node *snapshot.Node) {
+		out = append(out, node)
+		for _, child := range sortedChildren(node.Children, sortByNodeName, false, m.metrics) {
+			walk(child)
+		}
+	}
+	for _, child := range sortedChildren(m.tree.Root.Children, sortByNodeName, false, m.metrics) {
+		walk(child)
+	}
+	return out
+}
+
+func plainNodeContent(node *snapshot.Node) string {
+	if node == nil {
+		return ""
+	}
+	return ansiEscapeRE.ReplaceAllString(format.ZNodeContent(node.Data), "")
+}
+
+func (m *Model) scrollMatchIntoView() {
+	if m.matchNode != m.selected || m.matchQuery == "" || m.matchIndex < 0 {
+		return
+	}
+	text := m.selectedContentText()
+	if m.matchIndex > len(text) {
+		return
+	}
+	line := strings.Count(text[:m.matchIndex], "\n")
+	height := m.contentInnerHeight()
+	if height < 1 {
+		height = 1
+	}
+	target := line - height/2
+	if target < 0 {
+		target = 0
+	}
+	maxOffset := len(m.contentLines) - height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if target > maxOffset {
+		target = maxOffset
+	}
+	m.contentOffset = target
 }
 
 func (m Model) renderMetadata() string {
@@ -530,7 +794,11 @@ func (m Model) renderContentWindowLines(width, height int) []string {
 		idx := offset + i
 		line := ""
 		if idx >= 0 && idx < len(lines) {
-			line = truncateANSI(lines[idx], textWidth)
+			line = lines[idx]
+			if m.matchNode == m.selected && m.matchQuery != "" && m.matchIndex >= 0 {
+				line = highlightMatchedLine(lines, idx, m.matchQuery, m.matchIndex)
+			}
+			line = truncateANSI(line, textWidth)
 		}
 		line = padToWidthANSI(line, textWidth)
 		if m.contentSelect {
@@ -799,6 +1067,7 @@ func (m Model) renderStatusBar(width int) string {
 	items := []string{
 		statusKeyStyle.Render("^Q") + " Quit",
 		statusKeyStyle.Render("^S") + " Show stats",
+		statusKeyStyle.Render("^F") + " Search",
 		statusKeyStyle.Render("Tab") + " Switch panels",
 		statusKeyStyle.Render("^O") + " Change sort order",
 		statusKeyStyle.Render("^R") + " Reverse sort order",
@@ -825,6 +1094,91 @@ func (m Model) renderStatusBar(width int) string {
 		line = truncate(line, innerWidth)
 	}
 	return " " + statusBarStyle.Width(innerWidth).Render(line)
+}
+
+func (m Model) renderSearchDialog(totalWidth int) string {
+	title := "Search nodes (name + content)"
+	if m.searchScope == searchContent {
+		title = "Search content"
+	}
+	dialogWidth := totalWidth - 10
+	if dialogWidth < 40 {
+		dialogWidth = 40
+	}
+	if dialogWidth > 90 {
+		dialogWidth = 90
+	}
+	cursor := "█"
+	inputPrefix := "Query: "
+	fieldWidth := dialogWidth - 6 - lipgloss.Width(inputPrefix)
+	if fieldWidth < 8 {
+		fieldWidth = 8
+	}
+	fieldText := rightCropToWidth(m.searchInput+cursor, fieldWidth)
+	inputLine := inputPrefix + searchInputStyle.Width(fieldWidth).Render(fieldText)
+	lines := []string{
+		title,
+		"",
+		inputLine,
+		"",
+		"Enter = find next | Esc = cancel",
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("39")).
+		Padding(1, 2).
+		Width(dialogWidth).
+		Render(strings.Join(lines, "\n"))
+}
+
+func highlightMatchedLine(lines []string, lineIdx int, query string, matchIndex int) string {
+	if lineIdx < 0 || lineIdx >= len(lines) || query == "" || matchIndex < 0 {
+		return lines[lineIdx]
+	}
+	line := ansiEscapeRE.ReplaceAllString(lines[lineIdx], "")
+	lineStart := 0
+	for i := 0; i < lineIdx; i++ {
+		lineStart += len(ansiEscapeRE.ReplaceAllString(lines[i], "")) + 1
+	}
+	lineEnd := lineStart + len(line)
+	matchEnd := matchIndex + len(query)
+	if matchEnd <= lineStart || matchIndex >= lineEnd {
+		return line
+	}
+	relStart := matchIndex - lineStart
+	if relStart < 0 {
+		relStart = 0
+	}
+	relEnd := matchEnd - lineStart
+	if relEnd > len(line) {
+		relEnd = len(line)
+	}
+	if relStart >= relEnd {
+		return line
+	}
+	return line[:relStart] + searchMatchStyle.Render(line[relStart:relEnd]) + line[relEnd:]
+}
+
+func rightCropToWidth(s string, max int) string {
+	if max <= 0 || s == "" {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	start := len(runes)
+	width := 0
+	for start > 0 {
+		r := runes[start-1]
+		rw := lipgloss.Width(string(r))
+		if width+rw > max {
+			break
+		}
+		start--
+		width += rw
+	}
+	return string(runes[start:])
 }
 
 type snapshotStats struct {

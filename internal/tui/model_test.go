@@ -65,6 +65,107 @@ func TestContentCtrlAAndCtrlCCopiesContent(t *testing.T) {
 	}
 }
 
+func TestCtrlFNodeSearchFindsByNameAndContent(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a1")})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed := model.(Model)
+	if typed.selected.Path != "/a/a1" {
+		t.Fatalf("expected /a/a1 selected by name search, got %q", typed.selected.Path)
+	}
+	if !typed.expanded["/a"] {
+		t.Fatalf("expected /a expanded after selecting /a/a1 from search")
+	}
+	if typed.nodeMatchNode != typed.selected || typed.nodeMatchQuery != "a1" {
+		t.Fatalf("expected table match highlight state on /a/a1")
+	}
+
+	typed.lastNodeQuery = ""
+	model = typed
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line2")})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed = model.(Model)
+	if typed.selected.Path != "/a" {
+		t.Fatalf("expected /a selected by content search, got %q", typed.selected.Path)
+	}
+	if typed.matchQuery != "line2" || typed.matchNode != typed.selected || typed.matchIndex < 0 {
+		t.Fatalf("expected active content match on selected node, got query=%q idx=%d", typed.matchQuery, typed.matchIndex)
+	}
+	if typed.nodeMatchNode != typed.selected || typed.nodeMatchQuery != "line2" {
+		t.Fatalf("expected table highlight state to track node search match")
+	}
+}
+
+func TestCtrlFContentSearchFindsNextMatch(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab}) // focus content
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line")})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed := model.(Model)
+	first := typed.matchIndex
+	if first < 0 {
+		t.Fatalf("expected first content match")
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed = model.(Model)
+	if typed.matchIndex <= first {
+		t.Fatalf("expected next content match index > %d, got %d", first, typed.matchIndex)
+	}
+}
+
+func TestCtrlFNodeSearchCentersTreeSelection(t *testing.T) {
+	root := &snapshot.Node{ID: "/", Path: ""}
+	nodes := make([]*snapshot.Node, 0, 8)
+	for i := 0; i < 8; i++ {
+		id := string(rune('a' + i))
+		n := &snapshot.Node{ID: id, Path: "/" + id, Parent: root}
+		nodes = append(nodes, n)
+	}
+	root.Children = nodes
+
+	model := NewModel(&snapshot.Tree{Root: root})
+	var m tea.Model = model
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 8}) // tree visible rows = 4
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	typed := m.(Model)
+	if typed.selected == nil || typed.selected.Path != "/g" {
+		t.Fatalf("expected /g selected after search, got %v", typed.selected)
+	}
+	if typed.treeOffset != 4 {
+		t.Fatalf("expected centered tree offset 4, got %d", typed.treeOffset)
+	}
+}
+
+func TestCtrlFContentSearchCentersMatchedLine(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 20}) // content height = 4
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})              // focus content
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line7")})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	typed := model.(Model)
+	if typed.matchIndex < 0 {
+		t.Fatalf("expected a content match")
+	}
+	if typed.contentOffset != 4 {
+		t.Fatalf("expected centered content offset 4, got %d", typed.contentOffset)
+	}
+}
+
 func TestModelArrowNavigation(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 

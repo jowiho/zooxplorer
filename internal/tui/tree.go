@@ -143,11 +143,11 @@ var (
 )
 
 func renderTree(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool) string {
-	lines := renderTreeWindow(rows, selected, width, expanded, order, descending, nil, 0, len(rows))
+	lines := renderTreeWindow(rows, selected, width, expanded, order, descending, nil, nil, "", 0, len(rows))
 	return strings.Join(lines, "\n")
 }
 
-func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics, offset, height int) []string {
+func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded map[string]bool, order sortColumn, descending bool, metrics map[*snapshot.Node]treeMetrics, matchNode *snapshot.Node, matchQuery string, offset, height int) []string {
 	if width < 10 {
 		width = 10
 	}
@@ -201,11 +201,18 @@ func renderTreeWindow(rows []row, selected *snapshot.Node, width int, expanded m
 		nameW, _, _, _, _ := tableColumnWidths(width)
 		nameCell := truncate(displayName, nameW)
 		if selected == r.Node {
+			if matchNode == r.Node && matchQuery != "" {
+				nameCell = styleNodeNameCell(nameCell, plainPrefix, indent, icon, matchQuery)
+			}
 			line := formatTreeTableRow(nameCell, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
 			line = selectedRowStyle.Width(width).Render(padToWidth(line, width))
 			lines = append(lines, line)
 		} else {
-			nameCell = styleNodeNameCell(nameCell, plainPrefix, indent, icon)
+			query := ""
+			if matchNode == r.Node {
+				query = matchQuery
+			}
+			nameCell = styleNodeNameCell(nameCell, plainPrefix, indent, icon, query)
 			line := formatTreeTableRow(nameCell, sizeInfo, metrics[r.Node].subtreeSize, len(r.Node.Children), r.Node.Stat.Mtime, width)
 			lines = append(lines, line)
 		}
@@ -280,7 +287,7 @@ func padToWidth(s string, width int) string {
 	return s + strings.Repeat(" ", width-w)
 }
 
-func styleNodeNameCell(nameCell, prefix string, depthIndent string, icon string) string {
+func styleNodeNameCell(nameCell, prefix string, depthIndent string, icon string, matchQuery string) string {
 	prefixText := fmt.Sprintf("%s%s%s ", prefix, depthIndent, icon)
 	if !strings.HasPrefix(nameCell, prefixText) {
 		return nameCell
@@ -289,7 +296,24 @@ func styleNodeNameCell(nameCell, prefix string, depthIndent string, icon string)
 	if visibleName == "" {
 		return nameCell
 	}
-	return prefixText + treeNodeNameStyle.Render(visibleName)
+	if matchQuery == "" {
+		return prefixText + treeNodeNameStyle.Render(visibleName)
+	}
+	matchAt := strings.Index(visibleName, matchQuery)
+	if matchAt < 0 {
+		return prefixText + treeNodeNameStyle.Render(visibleName)
+	}
+	matchEnd := matchAt + len(matchQuery)
+	if matchEnd > len(visibleName) {
+		matchEnd = len(visibleName)
+	}
+	before := treeNodeNameStyle.Render(visibleName[:matchAt])
+	matched := treeNodeNameStyle.Copy().
+		Background(lipgloss.Color("226")).
+		Foreground(lipgloss.Color("0")).
+		Render(visibleName[matchAt:matchEnd])
+	after := treeNodeNameStyle.Render(visibleName[matchEnd:])
+	return prefixText + before + matched + after
 }
 
 func formatMTimeISO(millis int64) string {
