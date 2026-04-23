@@ -8,6 +8,34 @@ import (
 	"github.com/jowiho/zooxplorer/internal/snapshot"
 )
 
+func applyAndFlushCmd(model tea.Model, key tea.KeyMsg) tea.Model {
+	next, cmd := model.Update(key)
+	remaining := 0
+	pending := []tea.Cmd{cmd}
+	for len(pending) > 0 && remaining < 200 {
+		remaining++
+		current := pending[0]
+		pending = pending[1:]
+		if current == nil {
+			continue
+		}
+		msg := current()
+		if msg == nil {
+			continue
+		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				pending = append(pending, c)
+			}
+			continue
+		}
+		var nextCmd tea.Cmd
+		next, nextCmd = next.Update(msg)
+		pending = append(pending, nextCmd)
+	}
+	return next
+}
+
 func TestFormatSnapshotTimeUTC(t *testing.T) {
 	got := formatSnapshotTimeUTC(0)
 	if got != "1970-01-01T00:00:00Z" {
@@ -69,9 +97,9 @@ func TestCtrlFNodeSearchFindsByNameAndContent(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m
 
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a1")})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a1")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
 	typed := model.(Model)
 	if typed.selected.Path != "/a/a1" {
 		t.Fatalf("expected /a/a1 selected by name search, got %q", typed.selected.Path)
@@ -85,9 +113,9 @@ func TestCtrlFNodeSearchFindsByNameAndContent(t *testing.T) {
 
 	typed.lastNodeQuery = ""
 	model = typed
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line2")})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line2")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
 	typed = model.(Model)
 	if typed.selected.Path != "/a" {
 		t.Fatalf("expected /a selected by content search, got %q", typed.selected.Path)
@@ -103,19 +131,19 @@ func TestCtrlFNodeSearchFindsByNameAndContent(t *testing.T) {
 func TestCtrlFContentSearchFindsNextMatch(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab}) // focus content
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyTab}) // focus content
 
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line")})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
 	typed := model.(Model)
 	first := typed.matchIndex
 	if first < 0 {
 		t.Fatalf("expected first content match")
 	}
 
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
 	typed = model.(Model)
 	if typed.matchIndex <= first {
 		t.Fatalf("expected next content match index > %d, got %d", first, typed.matchIndex)
@@ -135,9 +163,9 @@ func TestCtrlFNodeSearchCentersTreeSelection(t *testing.T) {
 	model := NewModel(&snapshot.Tree{Root: root})
 	var m tea.Model = model
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 8}) // tree visible rows = 4
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = applyAndFlushCmd(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	m = applyAndFlushCmd(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")})
+	m = applyAndFlushCmd(m, tea.KeyMsg{Type: tea.KeyEnter})
 
 	typed := m.(Model)
 	if typed.selected == nil || typed.selected.Path != "/g" {
@@ -152,10 +180,10 @@ func TestCtrlFContentSearchCentersMatchedLine(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 	var model tea.Model = m
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 20}) // content height = 4
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})              // focus content
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line7")})
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyTab})      // focus content
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("line7")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	typed := model.(Model)
 	if typed.matchIndex < 0 {
@@ -163,6 +191,22 @@ func TestCtrlFContentSearchCentersMatchedLine(t *testing.T) {
 	}
 	if typed.contentOffset != 4 {
 		t.Fatalf("expected centered content offset 4, got %d", typed.contentOffset)
+	}
+}
+
+func TestCtrlFSearchNoResultsShowsMessage(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	var model tea.Model = m
+
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("no-such-node-or-content")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyEnter})
+	typed := model.(Model)
+	if !typed.searchOpen {
+		t.Fatalf("expected search dialog to remain open on no-result")
+	}
+	if typed.searchMessage == "" || !strings.Contains(typed.searchMessage, "No results") {
+		t.Fatalf("expected no-results message, got %q", typed.searchMessage)
 	}
 }
 

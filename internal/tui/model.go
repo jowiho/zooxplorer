@@ -32,6 +32,17 @@ const (
 	searchContent
 )
 
+type searchDoneMsg struct {
+	scope        searchScope
+	query        string
+	found        bool
+	node         *snapshot.Node
+	nameMatched  bool
+	contentMatch int
+}
+
+type searchSpinnerMsg struct{}
+
 var metadataPathStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 var statsLabelStyle = lipgloss.NewStyle().Bold(true)
 var statusBarStyle = lipgloss.NewStyle().Reverse(true)
@@ -59,6 +70,9 @@ type Model struct {
 	searchOpen     bool
 	searchScope    searchScope
 	searchInput    string
+	searchRunning  bool
+	searchMessage  string
+	searchSpinStep int
 	lastNodeQuery  string
 	lastBodyQuery  string
 	matchQuery     string
@@ -117,23 +131,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+	case searchSpinnerMsg:
+		if m.searchRunning {
+			m.searchSpinStep = (m.searchSpinStep + 1) % 4
+			return m, searchSpinnerTickCmd()
+		}
+	case searchDoneMsg:
+		m.searchRunning = false
+		if !msg.found {
+			m.searchMessage = fmt.Sprintf("No results for %q", msg.query)
+			return m, nil
+		}
+		m.searchMessage = ""
+		if msg.scope == searchNodes {
+			m.selectNode(msg.node)
+			m.centerSelectedRowInTree()
+			m.nodeMatchQuery = msg.query
+			m.nodeMatchNode = msg.node
+			if msg.contentMatch >= 0 {
+				m.matchQuery = msg.query
+				m.matchIndex = msg.contentMatch
+				m.matchNode = msg.node
+				m.scrollMatchIntoView()
+			} else {
+				m.clearContentMatch()
+			}
+		} else {
+			m.matchQuery = msg.query
+			m.matchIndex = msg.contentMatch
+			m.matchNode = m.selected
+			m.scrollMatchIntoView()
+			m.clearNodeMatch()
+		}
+		m.searchOpen = false
+		return m, nil
 	case tea.KeyMsg:
 		if m.searchOpen {
+			if m.searchRunning {
+				if msg.String() == "ctrl+q" {
+					return m, tea.Quit
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "ctrl+q":
 				return m, tea.Quit
 			case "esc":
 				m.searchOpen = false
+				m.searchMessage = ""
 				return m, nil
 			case "enter":
 				query := m.searchInput
 				if query != "" {
 					if m.searchScope == searchNodes {
 						m.lastNodeQuery = query
-						m.searchNextNode(query)
+						m.searchRunning = true
+						m.searchMessage = ""
+						return m, tea.Batch(m.startNodeSearchCmd(query), searchSpinnerTickCmd())
 					} else {
 						m.lastBodyQuery = query
-						m.searchNextContent(query)
+						m.searchRunning = true
+						m.searchMessage = ""
+						return m, tea.Batch(m.startContentSearchCmd(query), searchSpinnerTickCmd())
 					}
 				}
 				m.searchOpen = false
@@ -143,10 +202,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(r) > 0 {
 					m.searchInput = string(r[:len(r)-1])
 				}
+				m.searchMessage = ""
 				return m, nil
 			}
 			if msg.Type == tea.KeyRunes {
 				m.searchInput += string(msg.Runes)
+				m.searchMessage = ""
 				return m, nil
 			}
 			return m, nil
@@ -175,6 +236,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+f":
 			m.searchOpen = true
+			m.searchRunning = false
+			m.searchMessage = ""
 			if m.focus == focusContent {
 				m.searchScope = searchContent
 				m.searchInput = m.lastBodyQuery
@@ -457,79 +520,83 @@ func (m *Model) clearNodeMatch() {
 	m.nodeMatchNode = nil
 }
 
-func (m *Model) searchNextNode(query string) {
-	if m.tree == nil || m.tree.Root == nil || query == "" {
-		return
-	}
-	nodes := m.depthFirstNodesByName()
-	if len(nodes) == 0 {
-		return
-	}
-	start := -1
-	for i, n := range nodes {
-		if n == m.selected {
-			start = i
-			break
+func (m Model) startNodeSearchCmd(query string) tea.Cmd {
+	tree := m.tree
+	metrics := m.metrics
+	selected := m.selected
+	return func() tea.Msg {
+		nodes := depthFirstNodesByName(tree, metrics)
+		if len(nodes) == 0 {
+			return searchDoneMsg{scope: searchNodes, query: query, found: false, contentMatch: -1}
 		}
-	}
-	for step := 1; step <= len(nodes); step++ {
-		idx := (start + step) % len(nodes)
-		node := nodes[idx]
-		if strings.Contains(node.ID, query) {
-			m.selectNode(node)
-			m.centerSelectedRowInTree()
-			m.nodeMatchQuery = query
-			m.nodeMatchNode = node
-			m.clearContentMatch()
-			return
+		start := -1
+		for i, n := range nodes {
+			if n == selected {
+				start = i
+				break
+			}
 		}
-		content := plainNodeContent(node)
-		if matchAt := strings.Index(content, query); matchAt >= 0 {
-			m.selectNode(node)
-			m.centerSelectedRowInTree()
-			m.nodeMatchQuery = query
-			m.nodeMatchNode = node
-			m.matchQuery = query
-			m.matchIndex = matchAt
-			m.matchNode = node
-			m.scrollMatchIntoView()
-			return
+		for step := 1; step <= len(nodes); step++ {
+			idx := (start + step) % len(nodes)
+			node := nodes[idx]
+			if strings.Contains(node.ID, query) {
+				return searchDoneMsg{
+					scope:        searchNodes,
+					query:        query,
+					found:        true,
+					node:         node,
+					nameMatched:  true,
+					contentMatch: -1,
+				}
+			}
+			if matchAt := strings.Index(plainNodeContent(node), query); matchAt >= 0 {
+				return searchDoneMsg{
+					scope:        searchNodes,
+					query:        query,
+					found:        true,
+					node:         node,
+					contentMatch: matchAt,
+				}
+			}
 		}
+		return searchDoneMsg{scope: searchNodes, query: query, found: false, contentMatch: -1}
 	}
 }
 
-func (m *Model) searchNextContent(query string) {
-	if query == "" || m.selected == nil {
-		return
-	}
-	m.clearNodeMatch()
-	text := m.selectedContentText()
-	if text == "" {
-		return
-	}
-	start := 0
-	if m.matchQuery == query && m.matchNode == m.selected && m.matchIndex >= 0 {
-		start = m.matchIndex + len(query)
-		if start > len(text) {
-			start = len(text)
+func (m Model) startContentSearchCmd(query string) tea.Cmd {
+	selected := m.selected
+	matchNode := m.matchNode
+	matchQuery := m.matchQuery
+	matchIndex := m.matchIndex
+	return func() tea.Msg {
+		if selected == nil {
+			return searchDoneMsg{scope: searchContent, query: query, found: false, contentMatch: -1}
 		}
-	}
-	matchAt := -1
-	if start < len(text) {
-		if idx := strings.Index(text[start:], query); idx >= 0 {
-			matchAt = start + idx
+		text := plainNodeContent(selected)
+		if text == "" {
+			return searchDoneMsg{scope: searchContent, query: query, found: false, contentMatch: -1}
 		}
+		start := 0
+		if matchQuery == query && matchNode == selected && matchIndex >= 0 {
+			start = matchIndex + len(query)
+			if start > len(text) {
+				start = len(text)
+			}
+		}
+		foundAt := -1
+		if start < len(text) {
+			if idx := strings.Index(text[start:], query); idx >= 0 {
+				foundAt = start + idx
+			}
+		}
+		if foundAt < 0 {
+			foundAt = strings.Index(text, query)
+		}
+		if foundAt < 0 {
+			return searchDoneMsg{scope: searchContent, query: query, found: false, contentMatch: -1}
+		}
+		return searchDoneMsg{scope: searchContent, query: query, found: true, node: selected, contentMatch: foundAt}
 	}
-	if matchAt < 0 {
-		matchAt = strings.Index(text, query)
-	}
-	if matchAt < 0 {
-		return
-	}
-	m.matchQuery = query
-	m.matchIndex = matchAt
-	m.matchNode = m.selected
-	m.scrollMatchIntoView()
 }
 
 func (m *Model) selectNode(node *snapshot.Node) {
@@ -572,22 +639,22 @@ func (m *Model) centerSelectedRowInTree() {
 	m.treeOffset = target
 }
 
-func (m Model) depthFirstNodesByName() []*snapshot.Node {
-	if m.tree == nil || m.tree.Root == nil {
+func depthFirstNodesByName(tree *snapshot.Tree, metrics map[*snapshot.Node]treeMetrics) []*snapshot.Node {
+	if tree == nil || tree.Root == nil {
 		return nil
 	}
-	if len(m.metrics) == 0 {
-		return flattenAllNodes(m.tree.Root)
+	if len(metrics) == 0 {
+		return flattenAllNodes(tree.Root)
 	}
 	out := make([]*snapshot.Node, 0, 256)
 	var walk func(node *snapshot.Node)
 	walk = func(node *snapshot.Node) {
 		out = append(out, node)
-		for _, child := range sortedChildren(node.Children, sortByNodeName, false, m.metrics) {
+		for _, child := range sortedChildren(node.Children, sortByNodeName, false, metrics) {
 			walk(child)
 		}
 	}
-	for _, child := range sortedChildren(m.tree.Root.Children, sortByNodeName, false, m.metrics) {
+	for _, child := range sortedChildren(tree.Root.Children, sortByNodeName, false, metrics) {
 		walk(child)
 	}
 	return out
@@ -598,6 +665,12 @@ func plainNodeContent(node *snapshot.Node) string {
 		return ""
 	}
 	return ansiEscapeRE.ReplaceAllString(format.ZNodeContent(node.Data), "")
+}
+
+func searchSpinnerTickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg {
+		return searchSpinnerMsg{}
+	})
 }
 
 func (m *Model) scrollMatchIntoView() {
@@ -1122,6 +1195,12 @@ func (m Model) renderSearchDialog(totalWidth int) string {
 		inputLine,
 		"",
 		"Enter = find next | Esc = cancel",
+	}
+	if m.searchRunning {
+		spin := []string{"-", "\\", "|", "/"}[m.searchSpinStep%4]
+		lines = append(lines, "Searching... "+spin)
+	} else if m.searchMessage != "" {
+		lines = append(lines, m.searchMessage)
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
