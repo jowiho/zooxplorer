@@ -210,6 +210,50 @@ func TestCtrlFSearchNoResultsShowsMessage(t *testing.T) {
 	}
 }
 
+func TestSearchFirstBackspaceClearsPrefilledQuery(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	typed := m
+	typed.lastNodeQuery = "reuse-me"
+	var model tea.Model = typed
+
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	typed = model.(Model)
+	if typed.searchInput != "reuse-me" || !typed.searchFirstKeyPending {
+		t.Fatalf("expected prefill and first-key pending, got input=%q pending=%v", typed.searchInput, typed.searchFirstKeyPending)
+	}
+
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyBackspace})
+	typed = model.(Model)
+	if typed.searchInput != "" {
+		t.Fatalf("expected first backspace to clear entire query, got %q", typed.searchInput)
+	}
+	if typed.searchFirstKeyPending {
+		t.Fatal("expected first-key pending cleared after backspace")
+	}
+
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyBackspace})
+	typed = model.(Model)
+	if typed.searchInput != "" {
+		t.Fatalf("expected second backspace to remove single rune only, got %q", typed.searchInput)
+	}
+}
+
+func TestSearchFirstRuneThenBackspaceDoesNotClearAll(t *testing.T) {
+	m := NewModel(sampleSnapshotTree())
+	typed := m
+	typed.lastNodeQuery = "ab"
+	var model tea.Model = typed
+
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyCtrlF})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	model = applyAndFlushCmd(model, tea.KeyMsg{Type: tea.KeyBackspace})
+	typed = model.(Model)
+	if typed.searchInput != "ab" {
+		t.Fatalf("expected append then backspace to yield %q, got %q", "ab", typed.searchInput)
+	}
+}
+
 func TestModelArrowNavigation(t *testing.T) {
 	m := NewModel(sampleSnapshotTree())
 

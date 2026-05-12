@@ -53,38 +53,39 @@ var searchInputStyle = lipgloss.NewStyle().Reverse(true)
 var ansiEscapeRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type Model struct {
-	tree           *snapshot.Tree
-	selected       *snapshot.Node
-	rows           []row
-	rowIndex       map[*snapshot.Node]int
-	metrics        map[*snapshot.Node]treeMetrics
-	sortOrder      sortColumn
-	sortDesc       [5]bool
-	expanded       map[string]bool
-	treeOffset     int
-	contentOffset  int
-	contentLines   []string
-	contentNode    *snapshot.Node
-	contentSelect  bool
-	copyContent    func(string) error
-	searchOpen     bool
-	searchScope    searchScope
-	searchInput    string
-	searchRunning  bool
-	searchMessage  string
-	searchSpinStep int
-	lastNodeQuery  string
-	lastBodyQuery  string
-	matchQuery     string
-	matchIndex     int
-	matchNode      *snapshot.Node
-	nodeMatchQuery string
-	nodeMatchNode  *snapshot.Node
-	focus          focusPane
-	statsOpen      bool
-	statsText      string
-	width          int
-	height         int
+	tree                  *snapshot.Tree
+	selected              *snapshot.Node
+	rows                  []row
+	rowIndex              map[*snapshot.Node]int
+	metrics               map[*snapshot.Node]treeMetrics
+	sortOrder             sortColumn
+	sortDesc              [5]bool
+	expanded              map[string]bool
+	treeOffset            int
+	contentOffset         int
+	contentLines          []string
+	contentNode           *snapshot.Node
+	contentSelect         bool
+	copyContent           func(string) error
+	searchOpen            bool
+	searchScope           searchScope
+	searchInput           string
+	searchFirstKeyPending bool
+	searchRunning         bool
+	searchMessage         string
+	searchSpinStep        int
+	lastNodeQuery         string
+	lastBodyQuery         string
+	matchQuery            string
+	matchIndex            int
+	matchNode             *snapshot.Node
+	nodeMatchQuery        string
+	nodeMatchNode         *snapshot.Node
+	focus                 focusPane
+	statsOpen             bool
+	statsText             string
+	width                 int
+	height                int
 }
 
 func NewModel(tree *snapshot.Tree) Model {
@@ -164,6 +165,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearNodeMatch()
 		}
 		m.searchOpen = false
+		m.searchFirstKeyPending = false
 		return m, nil
 	case tea.KeyMsg:
 		if m.searchOpen {
@@ -178,10 +180,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "esc":
 				m.searchOpen = false
+				m.searchFirstKeyPending = false
 				m.searchMessage = ""
 				return m, nil
 			case "enter":
 				query := m.searchInput
+				m.searchFirstKeyPending = false
 				if query != "" {
 					if m.searchScope == searchNodes {
 						m.lastNodeQuery = query
@@ -198,15 +202,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchOpen = false
 				return m, nil
 			case "backspace", "ctrl+h":
-				r := []rune(m.searchInput)
-				if len(r) > 0 {
-					m.searchInput = string(r[:len(r)-1])
+				if m.searchFirstKeyPending {
+					m.searchInput = ""
+					m.searchFirstKeyPending = false
+				} else {
+					r := []rune(m.searchInput)
+					if len(r) > 0 {
+						m.searchInput = string(r[:len(r)-1])
+					}
 				}
 				m.searchMessage = ""
 				return m, nil
 			}
 			if msg.Type == tea.KeyRunes {
 				m.searchInput += string(msg.Runes)
+				m.searchFirstKeyPending = false
 				m.searchMessage = ""
 				return m, nil
 			}
@@ -236,6 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+f":
 			m.searchOpen = true
+			m.searchFirstKeyPending = true
 			m.searchRunning = false
 			m.searchMessage = ""
 			if m.focus == focusContent {
